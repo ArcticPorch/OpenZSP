@@ -16,7 +16,7 @@ Always invoke pytest as `python -m pytest` from the repo root — `app.*` import
 
 ## Learning guide — keep it current
 
-`docs/LEARNING_GUIDE.md` is the user's primary way of learning this project: architecture, the reasoning behind each decision, the bugs found, what's done and what's next. **Any change that alters the project must update it in the same piece of work** — the header stats, the rule table (§5.8), corpus/split details (§6), a new entry in §8 for any bug worth learning from, a new row in the history (§9), fresh numbers in §10 copied from `python -m app.main` / `--full`, and the roadmap (§11). Treat a stale guide as a bug. §15 of the guide lists exactly what to touch.
+`docs/LEARNING_GUIDE.md` is the user's primary way of learning this project: architecture, the reasoning behind each decision, the bugs found, what's done and what's next. **Any change that alters the project must update it in the same piece of work** — the header stats, the rule table (§5.8), corpus/split details (§6), a new entry in §8 for any bug worth learning from, a new row in the history (§9), fresh numbers in §10 copied from `python -m app.main` / `--full`, and the roadmap (§11). `README.md` repeats the headline numbers and counts, so update it at the same time. Treat a stale guide or README as a bug. §15 of the guide lists exactly what to touch.
 
 ## Architecture
 
