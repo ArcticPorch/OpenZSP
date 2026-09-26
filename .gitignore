@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local virtual environment
+venv/
+.venv/
+
+# Machine-local Claude Code settings
+.claude/settings.local.json
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
