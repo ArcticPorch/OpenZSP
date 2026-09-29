@@ -2,21 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Start here
+
+1. **Read `TODO.md`.** It is the working plan. Work proceeds item by item in its order; tick each item (`- [x]`) in the same commit that completes it, and add new items there rather than anywhere else.
+2. **Current phase: graph connectivity & blast radius** (TODO "Next"). Detection & calibration is finished; its parked items stay parked unless the user asks. **JIT access is out of scope** for this project.
+3. **Do not read or edit the learning guide.** It was frozen on 2026-09-29 as a personal record, lives outside the repo, and must never be updated, recreated or committed. Do not use it for to-dos.
+4. Keep `README.md` headline numbers/counts in step with `python -m app.main` whenever they change; it must not link to any learning guide.
+5. Commit/push only when the user asks. Commit messages end with the co-author line used in `git log`.
+
 ## Environment & commands
 
-Python 3.14 with a local venv at `venv/`. Pytest is the only third-party dependency (there is no `requirements.txt`, `pyproject.toml`, or `pytest.ini` — pytest picks up `tests/` via rootdir defaults, and imports resolve because `app/` and `tests/` both have `__init__.py`).
+Python 3.14 with a local venv at `venv/` (Windows). Pytest is the only third-party dependency (there is no `requirements.txt`, `pyproject.toml`, or `pytest.ini` — pytest picks up `tests/` via rootdir defaults, and imports resolve because `app/` and `tests/` both have `__init__.py`). Run everything from the repo root. The commands below work in Git Bash; in PowerShell/cmd use `venv\Scripts\python.exe`.
 
 ```bash
-./venv/Scripts/python.exe -m pytest              # full suite (run from repo root)
+./venv/Scripts/python.exe -m pytest -q           # full suite (~30 s)
 ./venv/Scripts/python.exe -m pytest -q tests/test_features.py
 ./venv/Scripts/python.exe -m pytest -q tests/test_features.py::test_permissions_extraction
+./venv/Scripts/python.exe -m app.main            # train vs holdout vs fresh
 ```
 
 Always invoke pytest as `python -m pytest` from the repo root — `app.*` imports depend on the root being on `sys.path`.
-
-## Learning guide — keep it current
-
-The learning guide is the user's primary way of learning this project. It is **kept outside the repository** (removed from GitHub 2026-09-29); its local path is in `CLAUDE.local.md`, which is gitignored — never copy the guide back into the repo. It covers architecture, the reasoning behind each decision, the bugs found, what's done and what's next. **Any change that alters the project must update it in the same piece of work** — the header stats, the rule table (§5.8), corpus/split details (§6), a new entry in §8 for any bug worth learning from, a new row in the history (§9), fresh numbers in §10 copied from `python -m app.main` / `--full`, and the roadmap (§11). `README.md` repeats the headline numbers and counts, so update it at the same time; it must not link to the guide. Treat a stale guide or README as a bug. §15 of the guide lists exactly what to touch.
 
 ## Architecture
 
