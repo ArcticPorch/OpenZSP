@@ -341,6 +341,47 @@ def _active_admin_justified(b: EvidenceBuilder, rng: random.Random) -> list[Evid
     return out
 
 
+def _admin_on_medium_internal_tool(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: bob's exact grant shape, one sensitivity band too low to matter.
+
+    Standing admin, 300 days old, exercised near-daily -- identical to bob in
+    every respect except that the resource is MEDIUM rather than CRITICAL.
+    Loosening `standing_privilege_on_critical` to fire on MEDIUM-or-above now
+    fails a TRAIN label instead of passing silently. `henry` guards the same
+    axis from further below (LOW) and lives in the holdout, which is where a
+    tuning trap must not be.
+
+    Loosening to HIGH-or-above is still caught by nothing, in either split.
+    That is deliberate for now: whether standing admin on a HIGH resource is a
+    finding is an open labelling question, not something a control should
+    assert by fiat.
+    """
+    out = [
+        b.identity("ines", "Ines Carvalho", "human", "Site Reliability"),
+        b.resource("staging_cluster", "Staging Cluster", "server", "medium"),
+        b.grant(
+            "g_ines_admin",
+            "ines",
+            "staging_cluster",
+            "admin",
+            lifecycle="standing",
+            granted_at=b.ago(days=300),
+        ),
+    ]
+    for day in range(0, 21):
+        out.append(
+            b.event(
+                f"e_ines_admin_{day}",
+                "ines",
+                "staging_cluster",
+                "assume_role",
+                b.ago(days=day, hours=rng.randrange(0, 8)),
+            )
+        )
+    return out
+
+
 def _burst_then_escalation(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
     """Failed-auth burst followed by a successful self-grant: compromise shape."""
     out = [
@@ -1644,6 +1685,28 @@ SCENARIOS: tuple[Scenario, ...] = (
         build=_active_admin_justified,
     ),
     Scenario(
+        name="admin_on_medium_internal_tool",
+        description="Negative control: bob's grant shape on a MEDIUM staging cluster.",
+        expected=(
+            ExpectedFinding(
+                "EXCESSIVE_PRIVILEGE",
+                "ines",
+                "Same grant as bob (standing admin, 300 days, used near-daily); "
+                "only the resource differs, MEDIUM instead of CRITICAL. Firing "
+                "here means the sensitivity line has drifted down to MEDIUM, and "
+                "every engineer with admin on a staging box becomes an alert.",
+                should_fire=False,
+            ),
+            ExpectedFinding(
+                "STALE_ACCESS",
+                "ines",
+                "The grant is exercised near-daily.",
+                should_fire=False,
+            ),
+        ),
+        build=_admin_on_medium_internal_tool,
+    ),
+    Scenario(
         name="burst_then_escalation",
         description="Failed-auth burst on a service account followed by a self-grant.",
         expected=(
@@ -1727,11 +1790,14 @@ SCENARIOS: tuple[Scenario, ...] = (
             ExpectedFinding(
                 "STALE_ACCESS", "frank", "No activity of any kind for 190 days."
             ),
-            ExpectedFinding(
-                "EXCESSIVE_PRIVILEGE",
-                "frank",
-                "Standing read on customer records for an identity that has left.",
-            ),
+            # No EXCESSIVE_PRIVILEGE label, deliberately. One existed until
+            # 2026-09-29 and was removed on review: frank holds read on a HIGH
+            # resource and write on a MEDIUM one, neither privileged, both the
+            # right size for the job he had. What is wrong is that he left,
+            # which is a staleness fact STALE_ACCESS already reports -- the
+            # second label counted one root cause twice. Nor is it flipped to
+            # a negative: asserting a departed contractor's access to customer
+            # records "must not" be flagged would overclaim.
         ),
         build=_departed_contractor_active_grants,
     ),
@@ -1848,7 +1914,10 @@ SCENARIOS: tuple[Scenario, ...] = (
             ExpectedFinding(
                 "EXCESSIVE_PRIVILEGE",
                 "agent_ops",
-                "Grant cadence shows accretion with no review step.",
+                "Privilege creep: one grant a month for five months, none ever "
+                "revoked or reviewed, ending at a CRITICAL replica. No single "
+                "grant is excessive; the accumulation is. A known miss -- no "
+                "rule reads grant cadence yet.",
             ),
             ExpectedFinding(
                 "STALE_ACCESS",

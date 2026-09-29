@@ -258,17 +258,20 @@ def test_unlabelled_firings_are_reported_not_hidden():
 
 def test_known_misses_are_exactly_the_documented_ones():
     """
-    Three labelled findings do not fire, each for a reason worth keeping visible.
+    Two labelled findings do not fire, each for a reason worth keeping visible.
 
-    oscar/CONTEXT_MISMATCH needs peer-group baselines. frank and agent_ops hold
-    privilege that is broad or long-lived but neither privileged-on-critical,
-    so the current rule cannot reach them. If this set changes, the change was
-    either an improvement worth recording or a regression worth catching.
+    oscar/CONTEXT_MISMATCH needs peer-group baselines. agent_ops is privilege
+    creep -- no single grant is excessive, the monthly accumulation is -- and no
+    rule reads grant cadence yet. If this set changes, the change was either an
+    improvement worth recording or a regression worth catching.
+
+    frank/EXCESSIVE_PRIVILEGE used to be a third. It was removed as a label on
+    review (it double-counted his departure, which STALE_ACCESS reports), not
+    fixed by a rule -- see the comment on his scenario.
     """
     m = evaluate(ANCHOR)
     assert {(o.subject_id, o.factor_type) for o in m.misses()} == {
         ("oscar", "CONTEXT_MISMATCH"),
-        ("frank", "EXCESSIVE_PRIVILEGE"),
         ("agent_ops", "EXCESSIVE_PRIVILEGE"),
     }
 

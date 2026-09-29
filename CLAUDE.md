@@ -75,9 +75,9 @@ The pipeline is connected end to end — `test_pipeline_reaches_feature_extracti
 
 `SyntheticConnector` is a real connector, not a stub, and is the peer of any future AWS reader. Its data is **scenario-driven**: each `Scenario` carries `ExpectedFinding` ground truth, so the generator doubles as a labelled test set for measuring detection. `should_fire=False` marks a negative control (e.g. `active_admin_justified`) — "did not fire" is a tested outcome.
 
-The corpus is **37 scenarios / 62 labels, 45 positive and 17 negative**, sized so a single miss moves recall by ~4 points rather than ~12. `tests/test_corpus.py` enforces that: minimum positive count, a negative-control share between 20% and 50%, and both polarities per factor type. Negative controls are not optional decoration — a rule that fires unconditionally scores perfect recall on an all-positive set, so they are the only thing that makes precision computable.
+The corpus is **38 scenarios / 63 labels, 44 positive and 19 negative**, sized so a single miss moves recall by ~4 points rather than ~12. `tests/test_corpus.py` enforces that: minimum positive count, a negative-control share between 20% and 50%, and both polarities per factor type. Negative controls are not optional decoration — a rule that fires unconditionally scores perfect recall on an all-positive set, so they are the only thing that makes precision computable.
 
-Several scenarios exist as **discriminating pairs**: two identities that are identical in `IdentityFeatures` and differ only in something a naive rule ignores. `burst_then_escalation` vs `failed_logins_spread_thin` (both `failed_authentication_count == 12`, one is 18/hour and one is 0.4/day). `dormant_standing_admin` vs `recently_granted_not_yet_used` (feature-identical; only `granted_at` differs, 420 days vs 2). `service_account_sprawl` vs `read_only_analyst_wide_access` (both 6 standing grants; admin-on-production vs read-on-dashboards). `stale_connector_blind_spot` vs `incomplete_but_fresh_collection` (a connector that stopped vs one that only ever saw half). Keep these pairs feature-identical — if one drifts apart it silently stops testing anything.
+Several scenarios exist as **discriminating pairs**: two identities that are identical in `IdentityFeatures` and differ only in something a naive rule ignores. `burst_then_escalation` vs `failed_logins_spread_thin` (both `failed_authentication_count == 12`, one is 18/hour and one is 0.4/day). `dormant_standing_admin` vs `recently_granted_not_yet_used` (feature-identical; only `granted_at` differs, 420 days vs 2). `service_account_sprawl` vs `read_only_analyst_wide_access` (both 6 standing grants; admin-on-production vs read-on-dashboards). `active_admin_justified` vs `admin_on_medium_internal_tool` (bob vs ines: same standing admin, same usage; CRITICAL vs MEDIUM resource — the TRAIN-side trap on the privilege rule's sensitivity line). `stale_connector_blind_spot` vs `incomplete_but_fresh_collection` (a connector that stopped vs one that only ever saw half). Keep these pairs feature-identical — if one drifts apart it silently stops testing anything.
 
 Every `RiskFactorType` now has both a positive label and a negative control; `test_corpus.py` asserts that with no exemptions, so a new factor type cannot be claimed as covered until both exist.
 
@@ -103,27 +103,31 @@ Scoring is **rules carrying their own confidence**, aggregated probabilistically
 
 ### Detection quality, and the train/holdout split
 
-`Scenario.split` is `TRAIN` (24 scenarios, 46 labels) or `HOLDOUT` (13 scenarios, 16 labels). Membership is **declared per scenario, never shuffled**: a random split would move every run, so a metric could improve purely because the seed changed and yesterday's number would be unreproducible.
+`Scenario.split` is `TRAIN` (25 scenarios, 47 labels) or `HOLDOUT` (13 scenarios, 16 labels). Membership is **declared per scenario, never shuffled**: a random split would move every run, so a metric could improve purely because the seed changed and yesterday's number would be unreproducible.
 
 ```
                  train    holdout       gap
   precision     100.0%     100.0%     +0.0%
-  recall         91.7%     100.0%     +8.3%
+  recall         94.3%     100.0%     +5.7%
   specificity   100.0%     100.0%     +0.0%
 ```
 
-Whole corpus: precision 100%, recall 93.3%, F1 96.6%, 17/17 negative controls held, **zero unlabelled firings**.
+Whole corpus: precision 100%, recall 95.5%, F1 97.7%, 19/19 negative controls held, **zero unlabelled firings**. The rise from 91.7% train recall on 2026-09-26 is a label change (frank, below), not better detection.
 
-**The holdout is contaminated today and its number should not be quoted.** The rules were authored before the split existed, with every scenario visible, so nothing here was genuinely held out. The machinery's value starts from the *next* calibration cycle. The current +8.3% gap is noise, not evidence of generalisation — on 9 positive labels, one miss moves holdout recall by 11 points, which is why a 100% reading means very little.
+**The holdout is contaminated today and its number should not be quoted.** The rules were authored before the split existed, with every scenario visible, so nothing here was genuinely held out. The machinery's value starts from the *next* calibration cycle. The current +5.7% gap is noise, not evidence of generalisation — on 9 positive labels, one miss moves holdout recall by 11 points, which is why a 100% reading means very little.
 
 **The discipline no test can enforce:** tune against TRAIN, report HOLDOUT, and never move a threshold because a holdout number looked bad. The moment you do, the holdout is training data and its next reading is worthless. `test_detection_meets_calibration_floors` is therefore measured on TRAIN only — a floor held against the holdout would convert it into training data the first time someone edited a threshold to make the test pass. Floors: 0.90 precision / 0.85 recall / 1.00 specificity. Raise them when detection genuinely improves; never lower one to make a change pass.
 
 `tests/test_split.py` guards the rest: the splits partition cleanly, **no subject appears in both halves** (leakage would teach the holdout answer directly), the holdout carries both polarities and spans ≥4 factor types, and a per-split score agrees pair-for-pair with the whole-corpus score. That last one rests on scenario independence — already asserted — which is what makes evaluating a subset sound rather than an artifact of what got left out.
 
-Three labelled findings deliberately do not fire, pinned by `test_known_misses_are_exactly_the_documented_ones` so the set cannot drift silently:
+Two labelled findings deliberately do not fire, pinned by `test_known_misses_are_exactly_the_documented_ones` so the set cannot drift silently:
 
 - `oscar / CONTEXT_MISMATCH` — needs peer-group baselines, deferred on purpose.
-- `frank / EXCESSIVE_PRIVILEGE` and `agent_ops / EXCESSIVE_PRIVILEGE` — privilege that is broad or long-lived but not privileged-on-critical, which the current rule cannot reach.
+- `agent_ops / EXCESSIVE_PRIVILEGE` — privilege creep (one grant a month, never reviewed); no rule reads grant cadence yet.
+
+`frank / EXCESSIVE_PRIVILEGE` was a third until it was removed as a label on review: it double-counted his departure, which `STALE_ACCESS` already reports. **Never remove or flip a label because the engine misses it** — decide on what the factor type means, write the reason on the scenario, and report the metric change as a label change.
+
+The privilege rule's sensitivity line is trapped at MEDIUM (`ines`, train) and LOW (`henry`, holdout), but **not at HIGH** — no label yet says whether standing admin on a HIGH resource is a finding.
 
 **Unlabelled firings are not counted as false positives.** A firing on a pair the corpus never labelled is reported in its own bucket and must be triaged into ground truth over time; precision is an upper bound while any remain. Counting them as errors would understate precision, ignoring them would overstate it. Note the selection bias: unlabelled firings are surfaced *by* the engine, so a detection it misses entirely never gets proposed as a label. That asymmetry is another argument for a held-out split.
 

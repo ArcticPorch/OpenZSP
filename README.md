@@ -15,10 +15,10 @@ access worth converting.
 ```
                  train    holdout
   precision     100.0%     100.0%
-  recall         91.7%     100.0%
+  recall         94.3%     100.0%
   specificity   100.0%     100.0%
 
-  37 labelled scenarios · 62 labels (45 positive, 17 negative controls) · 15 rules · 210 tests
+  38 labelled scenarios · 63 labels (44 positive, 19 negative controls) · 15 rules · 211 tests
 ```
 
 > **Read these numbers carefully.** They are measured on a synthetic corpus written alongside the
@@ -97,7 +97,7 @@ python -m venv venv
 # Windows: venv\Scripts\activate      macOS/Linux: source venv/bin/activate
 pip install pytest
 
-python -m pytest -q              # run the 210 tests
+python -m pytest -q              # run the 211 tests
 python -m app.main               # train vs holdout detection quality
 python -m app.main --full        # whole-corpus report, including misses
 python -m app.main --findings    # every identity's assessment, explained

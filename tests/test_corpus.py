@@ -167,6 +167,26 @@ def test_pair_grant_age_not_usage():
     assert (ANCHOR - grace_grant.granted_at).days < 7
 
 
+def test_pair_privilege_is_joined_to_sensitivity():
+    """
+    bob and ines hold the same grant: standing admin, 300 days, used near-daily.
+
+    bob's is over a CRITICAL production cluster, ines's over a MEDIUM staging
+    one. Every usage and privilege feature matches; only the critical count
+    differs. This is the TRAIN-side trap on the sensitivity line -- henry
+    guards it from LOW, but henry is in the holdout.
+    """
+    est = estate()
+    bob = features_for(est, "bob")
+    ines = features_for(est, "ines")
+
+    assert bob.standing_permission_count == ines.standing_permission_count == 1
+    assert bob.privileged_permission_count == ines.privileged_permission_count == 1
+    assert bob.total_event_count == ines.total_event_count
+    assert bob.standing_critical_permission_count == 1
+    assert ines.standing_critical_permission_count == 0
+
+
 def test_pair_breadth_needs_weighting():
     """
     svc_ci_runner and iris both hold six standing grants.
