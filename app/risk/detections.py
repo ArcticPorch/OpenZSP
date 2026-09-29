@@ -11,7 +11,9 @@ are handled entirely by the confidence floor in `scoring.py`, which is the
 point of carrying confidence per finding rather than per report.
 """
 
+from collections import Counter
 from datetime import timedelta
+from statistics import median
 from typing import Optional
 
 from app.models.event import Event, EventAction
@@ -21,7 +23,7 @@ from app.models.capability import (
     Capability,
 )
 from app.models.permission import GrantLifecycle
-from app.models.resource import Sensitivity
+from app.models.resource import ResourceType, Sensitivity
 from app.evidence.models import RecordKind
 from app.risk.models import RiskFactorType, RiskSubject, RiskSubjectType
 from app.risk.rules import RuleContext, RuleOutcome
@@ -34,10 +36,33 @@ from app.risk.scoring import confidence_from_coverage
 MIN_GRANT_AGE_DAYS = 30.0
 
 # Total silence beyond this, while holding standing access, reads as departure.
-# Set above the 85-day cadence of `seasonal_quarterly_batch` on purpose: a
-# global constant cannot model per-identity rhythm, so it is placed where it
-# does least damage until a baseline layer exists.
+# The *floor* of the dormancy threshold, not the whole of it: an identity with
+# an established rhythm of its own is judged against that rhythm instead (see
+# CADENCE_TOLERANCE). Still set above the 85-day cadence of
+# `seasonal_quarterly_batch`, so identities with too little history to have a
+# rhythm are treated exactly as before.
 DORMANT_IDENTITY_DAYS = 90.0
+
+# Per-identity cadence. An identity whose activity days are typically N days
+# apart is dormant only after CADENCE_TOLERANCE x N days of silence, and only
+# when at least MIN_CADENCE_GAPS gaps establish that N -- three runs of a job
+# are an anecdote, four are a rhythm. The baseline can only *raise* the
+# threshold above the floor, never lower it: a busy daily identity going quiet
+# for three weeks is a different finding, not dormancy.
+#
+# Calibrated 2026-09-29 on TRAIN only (the first honest cycle). Criterion
+# declared before sweeping: the midpoint of the widest all-correct range. The
+# range is (120/182, 160/91) = (0.66, 1.76), bounded by svc_semiannual_audit
+# below and svc_quarterly_recon above; 1.5 sat 0.26 from the upper edge, 1.25
+# is 0.59 from both. FRESH was read once, after this value was fixed.
+CADENCE_TOLERANCE = 1.25
+MIN_CADENCE_GAPS = 3
+
+# The sensitivity line for standing privilege. HIGH was added on 2026-09-29 as
+# a labelling decision, not a tuning one: standing admin is the thing to
+# convert to JIT whether the resource is CRITICAL or HIGH. MEDIUM stays out --
+# `admin_on_medium_internal_tool` is the trap that says so.
+PRIVILEGED_SENSITIVITIES = frozenset({Sensitivity.HIGH, Sensitivity.CRITICAL})
 
 # Burst detection. Rate, never raw count -- `failed_logins_spread_thin` and
 # `burst_then_escalation` both produce exactly 12 failed logins.
@@ -55,6 +80,29 @@ BLAST_RADIUS_MIN_GRANTS = 4
 REAWAKENING_GAP_DAYS = 60.0
 REAWAKENING_MIN_RECENT = 10
 INTERACTIVE_LOGIN_THRESHOLD = 3
+
+# Privilege creep: standing grants accumulated over time rather than issued
+# together, mostly unexercised, reaching something valuable. The date spread
+# is what separates creep from an onboarding batch with the same shape
+# (`agent_scope_accretion` vs `onboarding_batch_grants`).
+CREEP_MIN_GRANTS = 4
+CREEP_MIN_GRANT_DATES = 3
+CREEP_MIN_SPAN_DAYS = 60.0
+CREEP_MIN_UNUSED_SHARE = 0.5
+
+# Peer outlier: among the *other* holders of a HIGH+ resource, the share that
+# sit in your department. Needs enough other holders for "nobody like you has
+# this" to mean something.
+PEER_MIN_OTHER_HOLDERS = 4
+PEER_MAX_SAME_DEPT_SHARE = 0.25
+
+# Bulk read: reads of HIGH+ data in any one hour of the last week, against the
+# identity's own busiest hour before that week. Volume alone flags every ETL
+# job; volume against the identity's own history flags the change.
+BULK_READ_WINDOW = timedelta(hours=1)
+BULK_READ_RECENT = timedelta(days=7)
+BULK_READ_MIN = 50
+BULK_READ_BASELINE_MULTIPLIER = 3.0
 
 # Which event actions count as *exercising* a grant.
 #
@@ -134,6 +182,45 @@ def _max_in_window(events: list[Event], window: timedelta) -> int:
     return best
 
 
+def _peak_window(events: list[Event], window: timedelta) -> list[Event]:
+    """The events inside the busiest window -- what a burst finding should cite."""
+    if not events:
+        return []
+    ordered = sorted(events, key=lambda e: e.timestamp)
+    best = (0, 1)
+    start = 0
+    for end in range(len(ordered)):
+        while ordered[end].timestamp - ordered[start].timestamp > window:
+            start += 1
+        if end - start + 1 > best[1] - best[0]:
+            best = (start, end + 1)
+    return ordered[best[0] : best[1]]
+
+
+def _exercised(ctx: RuleContext) -> set[tuple[str, EventAction]]:
+    """(resource, action) pairs this identity has successfully performed."""
+    return {(e.resource_id, e.action) for e in ctx.past_events() if e.success}
+
+
+def _is_exercised(perm, exercised: set[tuple[str, EventAction]]) -> bool:
+    permitted = GRANT_EXERCISED_BY.get(perm.action, set())
+    return any((perm.resource_id, act) in exercised for act in permitted)
+
+
+def _median_activity_gap_days(ctx: RuleContext) -> tuple[Optional[float], int]:
+    """
+    The identity's own rhythm: median gap between distinct activity days.
+
+    Days, not events: a nightly job emitting a hundred events a night has a
+    rhythm of one day, not of forty seconds. Returns (median, number of gaps).
+    """
+    days = sorted({e.timestamp.date() for e in ctx.past_events()})
+    gaps = [(b - a).days for a, b in zip(days, days[1:])]
+    if not gaps:
+        return None, 0
+    return float(median(gaps)), len(gaps)
+
+
 def _grant_age_days(ctx: RuleContext, perm) -> Optional[float]:
     if perm.granted_at is None:
         return None
@@ -175,9 +262,7 @@ class UnusedStandingGrant:
     factor_type = RiskFactorType.STALE_ACCESS
 
     def evaluate(self, ctx: RuleContext) -> RuleOutcome:
-        exercised: set[tuple[str, EventAction]] = {
-            (e.resource_id, e.action) for e in ctx.past_events() if e.success
-        }
+        exercised = _exercised(ctx)
         stale = []
         for perm in ctx.identity.permissions:
             if perm.lifecycle is not GrantLifecycle.STANDING:
@@ -185,8 +270,7 @@ class UnusedStandingGrant:
             age = _grant_age_days(ctx, perm)
             if age is not None and age < MIN_GRANT_AGE_DAYS:
                 continue
-            permitted = GRANT_EXERCISED_BY.get(perm.action, set())
-            if any((perm.resource_id, act) in exercised for act in permitted):
+            if _is_exercised(perm, exercised):
                 continue
             stale.append(perm)
 
@@ -260,13 +344,18 @@ class DormantIdentity:
     """
     No activity of any kind for months, with standing access fully intact.
 
-    The offboarding-failure shape. Known limitation: this uses a fixed global
-    threshold, and `seasonal_quarterly_batch` is the scenario that shows why
-    that is wrong -- an identity whose legitimate cadence is quarterly needs a
-    per-identity baseline, which is a layer this engine does not yet have.
+    The offboarding-failure shape, judged against the identity's own rhythm.
+
+    v1 used one global threshold, which is wrong in both directions for a
+    scheduled job: a half-yearly audit export is "dormant" four months into
+    every cycle, and nothing distinguishes a quarterly job that ran on time
+    from one that silently stopped two quarters ago. v2 takes the larger of
+    the global floor and CADENCE_TOLERANCE x the identity's median gap
+    between activity days, once enough history exists to call it a rhythm.
+    `semiannual_job_on_cadence` and `quarterly_job_missed_runs` are the pair.
     """
 
-    rule_id = "dormant_identity.v1"
+    rule_id = "dormant_identity.v2"
     factor_type = RiskFactorType.STALE_ACCESS
 
     def evaluate(self, ctx: RuleContext) -> RuleOutcome:
@@ -274,12 +363,17 @@ class DormantIdentity:
         if not standing:
             return RuleOutcome.no_finding()
 
+        threshold = DORMANT_IDENTITY_DAYS
+        cadence, gaps = _median_activity_gap_days(ctx)
+        if cadence is not None and gaps >= MIN_CADENCE_GAPS:
+            threshold = max(threshold, CADENCE_TOLERANCE * cadence)
+
         last = ctx.features.last_event_timestamp
         if last is None:
             idle_days = None
         else:
             idle_days = (ctx.evaluation_time - last).total_seconds() / 86400.0
-        if idle_days is not None and idle_days < DORMANT_IDENTITY_DAYS:
+        if idle_days is not None and idle_days < threshold:
             return RuleOutcome.no_finding()
 
         return RuleOutcome(
@@ -289,7 +383,8 @@ class DormantIdentity:
             likelihood=8.0,
             confidence=confidence_from_coverage(ctx.coverage),
             description=(
-                f"No activity for {idle_days:.0f} days while holding "
+                f"No activity for {idle_days:.0f} days (dormancy threshold for "
+                f"this identity: {threshold:.0f}) while holding "
                 f"{len(standing)} standing grant(s)."
                 if idle_days is not None
                 else f"No activity ever recorded, holding {len(standing)} standing grant(s)."
@@ -302,16 +397,22 @@ class DormantIdentity:
 # --- EXCESSIVE_PRIVILEGE ---------------------------------------------------
 
 
-class StandingPrivilegeOnCritical:
+class StandingPrivilegeOnHighValue:
     """
-    Standing admin/deploy/delete over a CRITICAL resource.
+    Standing privileged capability over a HIGH or CRITICAL resource.
 
     Keyed on the action *joined to* what it is over. `admin_on_low_sensitivity_sandbox`
-    is the control: firing on the action alone flags every developer with a
-    sandbox and teaches operators to ignore the finding everywhere.
+    and `admin_on_medium_internal_tool` are the controls: firing on the action
+    alone flags every developer with a sandbox and teaches operators to ignore
+    the finding everywhere.
+
+    Supersedes `standing_privilege_on_critical.v1`, which drew the line at
+    CRITICAL. A new id rather than a v2 because the name itself was the old
+    line: an id that says "critical" while firing on HIGH would mislead
+    everyone reading stored assessments.
     """
 
-    rule_id = "standing_privilege_on_critical.v1"
+    rule_id = "standing_privilege_on_high_value.v1"
     factor_type = RiskFactorType.EXCESSIVE_PRIVILEGE
 
     def evaluate(self, ctx: RuleContext) -> RuleOutcome:
@@ -322,21 +423,26 @@ class StandingPrivilegeOnCritical:
             if not perm.action.is_privileged:
                 continue
             res = ctx.resource(perm.resource_id)
-            if res is not None and res.sensitivity is Sensitivity.CRITICAL:
+            if res is not None and res.sensitivity in PRIVILEGED_SENSITIVITIES:
                 hits.append(perm)
 
         if not hits:
             return RuleOutcome.no_finding()
 
+        critical = sum(
+            1 for p in hits if ctx.resource(p.resource_id).sensitivity is Sensitivity.CRITICAL
+        )
         return RuleOutcome(
             fired=True,
             subject=_identity_subject(ctx),
-            impact=9.0,
+            # A crown jewel is worse than a merely valuable system; confidence
+            # and likelihood do not change with the sensitivity, only impact.
+            impact=9.0 if critical else 7.5,
             likelihood=8.0,
             confidence=confidence_from_coverage(ctx.coverage),
             description=(
                 f"Standing {', '.join(sorted({p.action.value for p in hits}))} on "
-                f"{len(hits)} CRITICAL resource(s)."
+                f"{len(hits)} high-value resource(s), {critical} of them CRITICAL."
             ),
             recommendation="Replace standing access with JIT elevation and an approval gate.",
             evidence_ids=_cite_grants(ctx, [p.id for p in hits]),
@@ -357,7 +463,7 @@ class StandingPermissionManagement:
     themselves every other capability, which makes every other control
     advisory.
 
-    Deliberately excludes plain ADMIN, which `StandingPrivilegeOnCritical`
+    Deliberately excludes plain ADMIN, which `StandingPrivilegeOnHighValue`
     already covers and which `admin_on_low_sensitivity_sandbox` proves must not
     fire on its own. Joined to sensitivity for the same reason: permission
     management over a scratch project is not the same finding.
@@ -459,6 +565,121 @@ class StandingSecurityControlAccess:
                 "ship audit logs somewhere this identity cannot reach."
             ),
             evidence_ids=_cite_grants(ctx, [p.id for p in hits]),
+        )
+
+
+class StandingSecretAccess:
+    """
+    Standing access to a high-value secret store, whatever the capability.
+
+    The action x resource join the capability taxonomy cannot express alone:
+    READ on a wiki is ordinary, READ on a production vault is impersonation of
+    every credential inside it. Treating secret reads as ordinary reads is how
+    a "read-only" identity ends up holding the database password, the cloud
+    root key and the signing key.
+
+    Known limit: the engine sees the store, not the path. A service reading
+    only its own secret and a human able to read every secret look identical
+    here, which is why this rule is gated to HIGH+ stores rather than all.
+    """
+
+    rule_id = "standing_secret_access.v1"
+    factor_type = RiskFactorType.EXCESSIVE_PRIVILEGE
+
+    def evaluate(self, ctx: RuleContext) -> RuleOutcome:
+        hits = []
+        for perm in ctx.identity.permissions:
+            if not perm.is_standing or perm.action is Capability.AUTHENTICATE:
+                continue
+            res = ctx.resource(perm.resource_id)
+            if (
+                res is not None
+                and res.resource_type is ResourceType.SECRET_STORE
+                and res.sensitivity in PRIVILEGED_SENSITIVITIES
+            ):
+                hits.append(perm)
+
+        if not hits:
+            return RuleOutcome.no_finding()
+
+        return RuleOutcome(
+            fired=True,
+            subject=_identity_subject(ctx),
+            impact=8.5,
+            likelihood=8.0,
+            confidence=confidence_from_coverage(ctx.coverage),
+            description=(
+                f"Standing {', '.join(sorted({p.action.value for p in hits}))} on "
+                f"{len(hits)} high-value secret store(s): reading a secret confers "
+                "whatever that credential confers."
+            ),
+            recommendation=(
+                "Issue secrets just-in-time or federate the workload; revoke "
+                "standing reads on the store."
+            ),
+            evidence_ids=_cite_grants(ctx, [p.id for p in hits]),
+        )
+
+
+class PrivilegeCreep:
+    """
+    Standing grants that accumulated over months, mostly unused, reaching value.
+
+    No single grant is excessive -- each was reasonable on the day it was
+    issued. The finding is the process: access added on a cadence with nothing
+    taking any away. The grant *dates* are the signal, which is why
+    `onboarding_batch_grants` exists: the same five grants issued in one
+    afternoon are a provisioning event, not creep.
+
+    Requires most of the accumulated grants to be unexercised, because
+    accumulation the identity demonstrably uses is a role that grew, not access
+    that crept.
+    """
+
+    rule_id = "privilege_creep.v1"
+    factor_type = RiskFactorType.EXCESSIVE_PRIVILEGE
+
+    def evaluate(self, ctx: RuleContext) -> RuleOutcome:
+        standing = [
+            p for p in ctx.identity.permissions if p.is_standing and p.granted_at is not None
+        ]
+        if len(standing) < CREEP_MIN_GRANTS:
+            return RuleOutcome.no_finding()
+
+        dates = sorted({p.granted_at.date() for p in standing})
+        span = (dates[-1] - dates[0]).days
+        if len(dates) < CREEP_MIN_GRANT_DATES or span < CREEP_MIN_SPAN_DAYS:
+            return RuleOutcome.no_finding()
+
+        if not any(
+            (r := ctx.resource(p.resource_id)) is not None
+            and r.sensitivity in PRIVILEGED_SENSITIVITIES
+            for p in standing
+        ):
+            return RuleOutcome.no_finding()
+
+        exercised = _exercised(ctx)
+        unused = [p for p in standing if not _is_exercised(p, exercised)]
+        if len(unused) / len(standing) < CREEP_MIN_UNUSED_SHARE:
+            return RuleOutcome.no_finding()
+
+        return RuleOutcome(
+            fired=True,
+            subject=_identity_subject(ctx),
+            impact=7.0,
+            # Lower than the structural rules: an accumulation pattern is a
+            # strong hint about process, a weaker claim about any one grant.
+            likelihood=7.0,
+            confidence=confidence_from_coverage(ctx.coverage),
+            description=(
+                f"{len(standing)} standing grants added on {len(dates)} separate "
+                f"dates over {span} days; {len(unused)} never exercised."
+            ),
+            recommendation=(
+                "Review the whole set, not the newest grant; add an expiry or a "
+                "periodic recertification so access stops accumulating."
+            ),
+            evidence_ids=_cite_grants(ctx, [p.id for p in standing]),
         )
 
 
@@ -613,6 +834,63 @@ class DormantThenActive:
             ),
             recommendation="Confirm with the owner that this reactivation was expected.",
             evidence_ids=_cite_events(ctx, list(events)),
+        )
+
+
+class BulkReadBurst:
+    """
+    An hour of reading high-value data far beyond this identity's own history.
+
+    The exfiltration shape, and the one where a global volume threshold fails
+    hardest: a nightly ETL job reads more in an hour than most humans read in a
+    year, every night, legitimately. So volume is measured against the
+    identity's *own* busiest hour before the last week. `nightly_etl_on_schedule`
+    is the control -- huge volume, but the same huge volume as always.
+
+    An identity with no history before the window has a baseline of zero and
+    fires on volume alone. Never understating access applies to reads too: a
+    brand-new principal pulling fifty rows of customer data an hour is worth a
+    look, not a free pass.
+    """
+
+    rule_id = "bulk_read_burst.v1"
+    factor_type = RiskFactorType.ANOMALOUS_BEHAVIOR
+
+    def evaluate(self, ctx: RuleContext) -> RuleOutcome:
+        reads = [
+            e
+            for e in ctx.past_events()
+            if e.action is EventAction.READ
+            and e.success
+            and (r := ctx.resource(e.resource_id)) is not None
+            and r.sensitivity in PRIVILEGED_SENSITIVITIES
+        ]
+        recent_start = ctx.evaluation_time - BULK_READ_RECENT
+        recent = [e for e in reads if e.timestamp >= recent_start]
+        burst = _peak_window(recent, BULK_READ_WINDOW)
+        if len(burst) < BULK_READ_MIN:
+            return RuleOutcome.no_finding()
+
+        history = [e for e in reads if e.timestamp < recent_start]
+        baseline = _max_in_window(history, BULK_READ_WINDOW)
+        if baseline and len(burst) < BULK_READ_BASELINE_MULTIPLIER * baseline:
+            return RuleOutcome.no_finding()
+
+        return RuleOutcome(
+            fired=True,
+            subject=_identity_subject(ctx),
+            impact=8.5,
+            likelihood=7.0,
+            confidence=confidence_from_coverage(ctx.coverage),
+            description=(
+                f"{len(burst)} reads of high-value data inside one hour; this "
+                f"identity's busiest hour before this week was {baseline}."
+            ),
+            recommendation=(
+                "Confirm the export was sanctioned; check where the data went and "
+                "whether the identity's session was its own."
+            ),
+            evidence_ids=_cite_events(ctx, burst),
         )
 
 
@@ -843,21 +1121,86 @@ class ServiceAccountInteractiveLogin:
         )
 
 
+class PeerAccessOutlier:
+    """
+    Standing access to a high-value resource that nobody in your department holds.
+
+    `department_context_mismatch` is the positive: four other people hold the
+    payments ledger, all in Finance, and oscar is in Marketing. No fact about
+    oscar alone is odd -- the grant is real and so is the department -- which
+    is why this is the one rule that reads the cross-identity baseline.
+    `finance_admin_on_finance_db` is the control: the same grant, held by
+    someone whose department is exactly who holds it.
+
+    Declines when there are too few other holders to form a peer group. A
+    resource held by one other person says nothing about who it belongs to.
+    """
+
+    rule_id = "peer_access_outlier.v1"
+    factor_type = RiskFactorType.CONTEXT_MISMATCH
+
+    def evaluate(self, ctx: RuleContext) -> RuleOutcome:
+        if ctx.peers is None:
+            return RuleOutcome.no_finding()
+
+        hits = []
+        detail = ""
+        for perm in ctx.identity.permissions:
+            if not perm.is_standing:
+                continue
+            res = ctx.resource(perm.resource_id)
+            if res is None or res.sensitivity not in PRIVILEGED_SENSITIVITIES:
+                continue
+            others = ctx.peers.other_holders(perm.resource_id, ctx.identity.id)
+            if len(others) < PEER_MIN_OTHER_HOLDERS:
+                continue
+            same = sum(1 for _, dept in others if dept == ctx.identity.department)
+            if same / len(others) <= PEER_MAX_SAME_DEPT_SHARE:
+                hits.append(perm)
+                if not detail:
+                    usual = Counter(dept for _, dept in others).most_common(1)[0][0]
+                    detail = (
+                        f"{len(others)} others hold {perm.resource_id}, {same} in "
+                        f"{ctx.identity.department}; most are in {usual}."
+                    )
+
+        if not hits:
+            return RuleOutcome.no_finding()
+
+        return RuleOutcome(
+            fired=True,
+            subject=_identity_subject(ctx),
+            impact=7.5,
+            likelihood=7.0,
+            confidence=confidence_from_coverage(ctx.coverage),
+            description=detail,
+            recommendation=(
+                "Confirm the business reason with the resource owner; if there is "
+                "none, revoke rather than convert to JIT."
+            ),
+            evidence_ids=_cite_grants(ctx, [p.id for p in hits]),
+        )
+
+
 # The registry the engine runs. Order is stable so assessments diff cleanly.
 ALL_RULES: tuple = (
     UnusedStandingGrant(),
     ExpiredGrantStillAttached(),
     DormantIdentity(),
-    StandingPrivilegeOnCritical(),
+    StandingPrivilegeOnHighValue(),
     StandingPermissionManagement(),
     StandingSecurityControlAccess(),
+    StandingSecretAccess(),
+    PrivilegeCreep(),
     StandingBlastRadius(),
     FailedAuthBurst(),
     DestructiveBurst(),
     DormantThenActive(),
+    BulkReadBurst(),
     EscalationAfterFailedAuth(),
     RevokeThenRegrant(),
     RoleAssumptionChain(),
     ExposedPrivilegedAccess(),
     ServiceAccountInteractiveLogin(),
+    PeerAccessOutlier(),
 )

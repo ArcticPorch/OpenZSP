@@ -43,7 +43,7 @@ RISK_LEVEL_BANDS: tuple[tuple[float, RiskLevel], ...] = (
 )
 
 ENGINE_VERSION = "0.1.0"
-RULE_VERSION = "2026.09.24"
+RULE_VERSION = "2026.09.29"
 
 
 # --- Confidence ------------------------------------------------------------

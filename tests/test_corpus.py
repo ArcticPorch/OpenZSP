@@ -179,12 +179,72 @@ def test_pair_privilege_is_joined_to_sensitivity():
     est = estate()
     bob = features_for(est, "bob")
     ines = features_for(est, "ines")
+    hugo = features_for(est, "hugo")
 
-    assert bob.standing_permission_count == ines.standing_permission_count == 1
-    assert bob.privileged_permission_count == ines.privileged_permission_count == 1
-    assert bob.total_event_count == ines.total_event_count
+    for f in (bob, ines, hugo):
+        assert f.standing_permission_count == f.privileged_permission_count == 1
+        assert f.total_event_count == bob.total_event_count
     assert bob.standing_critical_permission_count == 1
     assert ines.standing_critical_permission_count == 0
+    assert hugo.standing_critical_permission_count == 0
+
+    # The rung that differs: hugo's resource is HIGH, ines's MEDIUM.
+    sens = {r.id: r.sensitivity.value for r in est.resources}
+    assert sens["internal_api_gateway"] == "high"
+    assert sens["staging_cluster"] == "medium"
+
+
+def test_pair_creep_is_the_grant_dates_not_the_grants():
+    """
+    agent_ops and agent_intake hold the same five grants and use them the same.
+
+    One accumulated them a month at a time; the other received them in one
+    afternoon. Only `Permission.granted_at` differs, and it is not a feature.
+    """
+    est = estate()
+    creep = features_for(est, "agent_ops")
+    batch = features_for(est, "agent_intake")
+    for name in (
+        "standing_permission_count",
+        "privileged_permission_count",
+        "standing_critical_permission_count",
+        "total_event_count",
+    ):
+        assert getattr(creep, name) == getattr(batch, name), name
+
+    creep_dates = {p.granted_at.date() for p in est.identity("agent_ops").permissions}
+    batch_dates = {p.granted_at.date() for p in est.identity("agent_intake").permissions}
+    assert len(creep_dates) == 5
+    assert len(batch_dates) == 1
+
+
+def test_pair_secret_is_the_resource_type_not_the_capability():
+    """otto and pablo: standing READ on a CRITICAL resource, used weekly. Vault vs database."""
+    est = estate()
+    otto = features_for(est, "otto")
+    pablo = features_for(est, "pablo")
+    assert otto.standing_critical_permission_count == pablo.standing_critical_permission_count == 1
+    assert otto.privileged_permission_count == pablo.privileged_permission_count == 0
+    assert otto.total_event_count == pablo.total_event_count
+
+    kinds = {r.id: r.resource_type.value for r in est.resources}
+    assert kinds["prod_vault"] == "secret_store"
+    assert kinds["orders_db"] == "database"
+
+
+def test_no_resource_is_shared_between_scenarios():
+    """
+    The peer baseline is built from each resource's holders. That is only
+    split-sound if every resource belongs to exactly one scenario: then adding
+    or removing other scenarios cannot change who holds it.
+    """
+    owners: dict[str, str] = {}
+    for scenario in SCENARIOS:
+        est = Normalizer().normalize(
+            SyntheticConnector(anchor_time=ANCHOR, scenarios=[scenario]).collect()
+        )
+        for r in est.resources:
+            assert owners.setdefault(r.id, scenario.name) == scenario.name, r.id
 
 
 def test_pair_breadth_needs_weighting():

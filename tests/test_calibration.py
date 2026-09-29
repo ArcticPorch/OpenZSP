@@ -1,0 +1,121 @@
+"""
+The cross-identity baseline and the threshold-sweep tool.
+
+Both exist to protect a discipline rather than to compute anything clever: the
+baseline keeps rules O(1) while letting one of them compare across identities,
+and the sweep makes tuning against a held-out split impossible rather than
+merely discouraged.
+"""
+
+from datetime import datetime, timezone
+
+import pytest
+
+from app.connectors.synthetic import FRESH, HOLDOUT, TRAIN, SyntheticConnector
+from app.models.identity import Identity, IdentityType
+from app.models.permission import GrantLifecycle, Permission
+from app.models.capability import Capability
+from app.normalize.normalizer import Normalizer
+from app.risk import calibration, detections
+from app.risk.baselines import PeerBaseline
+from app.risk.engine import RiskEngine
+from app.risk.models import RiskFactorType
+
+ANCHOR = datetime(2026, 9, 9, 0, 0, 0, tzinfo=timezone.utc)
+
+
+def person(pid: str, dept: str, *resources: str) -> Identity:
+    return Identity(
+        id=pid,
+        name=pid,
+        identity_type=IdentityType.HUMAN,
+        department=dept,
+        permissions=[
+            Permission(
+                id=f"g_{pid}_{r}",
+                identity_id=pid,
+                resource_id=r,
+                action=Capability.READ,
+                lifecycle=GrantLifecycle.STANDING,
+            )
+            for r in resources
+        ],
+    )
+
+
+# --- PeerBaseline ----------------------------------------------------------
+
+
+def test_baseline_excludes_the_identity_itself():
+    b = PeerBaseline.build([person("a", "Finance", "ledger"), person("b", "Marketing", "ledger")])
+    assert b.other_holders("ledger", "b") == (("a", "Finance"),)
+
+
+def test_baseline_is_order_independent():
+    people = [person("a", "Finance", "x"), person("b", "Sales", "x", "y")]
+    assert PeerBaseline.build(people) == PeerBaseline.build(list(reversed(people)))
+
+
+def test_baseline_unknown_resource_has_no_holders():
+    assert PeerBaseline.build([]).other_holders("nothing", "a") == ()
+
+
+def test_peer_rule_declines_without_a_baseline():
+    """A single-identity assessment has no peers; the rule must decline, not guess."""
+    est = Normalizer().normalize(SyntheticConnector(anchor_time=ANCHOR).collect())
+    result = RiskEngine().assess_identity(
+        est.identity("oscar"), est.resources, est.events, est, ANCHOR
+    )
+    kinds = {f.factor_type for f in result.assessment.triggered_factors}
+    assert RiskFactorType.CONTEXT_MISMATCH not in kinds
+
+
+def test_peer_rule_fires_with_the_estate_baseline():
+    est = Normalizer().normalize(SyntheticConnector(anchor_time=ANCHOR).collect())
+    results = {r.identity_id: r for r in RiskEngine().assess_estate(est, ANCHOR)}
+    kinds = {f.factor_type for f in results["oscar"].assessment.triggered_factors}
+    assert RiskFactorType.CONTEXT_MISMATCH in kinds
+
+
+# --- Sweeps ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("split", [HOLDOUT, FRESH])
+def test_sweep_refuses_held_out_splits(split):
+    with pytest.raises(ValueError, match="TRAIN only"):
+        calibration.sweep("CADENCE_TOLERANCE", [1.0], ANCHOR, split=split)
+
+
+def test_sweep_rejects_unknown_names():
+    with pytest.raises(ValueError):
+        calibration.sweep("NOT_A_THRESHOLD", [1], ANCHOR)
+
+
+def test_sweep_restores_the_original_value():
+    before = detections.CADENCE_TOLERANCE
+    calibration.sweep("CADENCE_TOLERANCE", [0.1, 9.0], ANCHOR)
+    assert detections.CADENCE_TOLERANCE == before
+
+
+def test_sweep_finds_both_edges_of_the_cadence_plateau():
+    """0.5 fires on the semiannual job; 2.0 misses the stopped quarterly job."""
+    points = calibration.sweep("CADENCE_TOLERANCE", [0.5, 1.25, 2.0], ANCHOR)
+    low, mid, high = points
+    assert "svc_semiannual_audit/STALE_ACCESS" in low.false_positives
+    assert mid.perfect
+    assert "svc_quarterly_recon/STALE_ACCESS" in high.false_negatives
+
+
+def test_plateau_picks_the_widest_run():
+    def pt(v, ok):
+        return calibration.SweepPoint(v, 1, 1, 1, () if ok else ("x",), (), 0)
+
+    points = [pt(1, True), pt(2, False), pt(3, True), pt(4, True), pt(5, True), pt(6, False)]
+    assert calibration.plateau(points) == (3, 5)
+    assert calibration.plateau([pt(1, False)]) is None
+
+
+def test_calibrated_value_sits_inside_the_train_plateau():
+    """The 2026-09-29 calibration: 1.25 is the midpoint of (0.66, 1.76)."""
+    assert detections.CADENCE_TOLERANCE == 1.25
+    assert 120 / 182 < detections.CADENCE_TOLERANCE < 160 / 91

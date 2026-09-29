@@ -1,11 +1,13 @@
 """
 CLI entry point: run the pipeline over the labelled corpus and report quality.
 
-    ./venv/Scripts/python.exe -m app.main             # train vs holdout
+    ./venv/Scripts/python.exe -m app.main             # train vs holdout vs fresh
     ./venv/Scripts/python.exe -m app.main --full      # whole-corpus detail
     ./venv/Scripts/python.exe -m app.main --train     # calibration detail
-    ./venv/Scripts/python.exe -m app.main --holdout   # holdout detail
+    ./venv/Scripts/python.exe -m app.main --holdout   # holdout detail (contaminated)
+    ./venv/Scripts/python.exe -m app.main --fresh     # fresh detail -- read once per cycle
     ./venv/Scripts/python.exe -m app.main --findings  # per-identity assessments
+    ./venv/Scripts/python.exe -m app.main --sweep NAME=v1,v2,...   # TRAIN only
 """
 
 import sys
@@ -14,7 +16,8 @@ from datetime import datetime, timezone
 from app.connectors.synthetic import SyntheticConnector
 from app.normalize.normalizer import Normalizer
 from app.risk.engine import RiskEngine
-from app.connectors.synthetic import HOLDOUT, TRAIN
+from app.connectors.synthetic import FRESH, HOLDOUT, TRAIN
+from app.risk import calibration
 from app.risk.evaluation import compare_splits, evaluate, format_report
 
 # Fixed anchor: the corpus is deterministic, so the report must be too.
@@ -43,13 +46,37 @@ def show_findings() -> None:
             )
 
 
+def run_sweep(spec: str) -> None:
+    """`NAME=v1,v2,...` -> a TRAIN-only curve. Values parse as int, then float."""
+    name, _, raw = spec.partition("=")
+
+    def parse(v: str):
+        for cast in (int, float):
+            try:
+                return cast(v)
+            except ValueError:
+                pass
+        raise SystemExit(f"cannot parse sweep value {v!r}")
+
+    values = [parse(v) for v in raw.split(",") if v]
+    current = getattr(calibration._owner(name), name)
+    print(calibration.format_sweep(name, calibration.sweep(name, values, ANCHOR), current))
+
+
 def main() -> int:
-    if "--findings" in sys.argv:
+    if "--sweep" in sys.argv:
+        idx = sys.argv.index("--sweep")
+        if idx + 1 >= len(sys.argv):
+            raise SystemExit("usage: --sweep NAME=v1,v2,...")
+        run_sweep(sys.argv[idx + 1])
+    elif "--findings" in sys.argv:
         show_findings()
     elif "--train" in sys.argv:
         print(format_report(evaluate(ANCHOR, split=TRAIN)))
     elif "--holdout" in sys.argv:
         print(format_report(evaluate(ANCHOR, split=HOLDOUT)))
+    elif "--fresh" in sys.argv:
+        print(format_report(evaluate(ANCHOR, split=FRESH)))
     elif "--full" in sys.argv:
         print(format_report(evaluate(ANCHOR)))
     else:

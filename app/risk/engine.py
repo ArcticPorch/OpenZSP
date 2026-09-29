@@ -12,6 +12,7 @@ from typing import Optional, Sequence
 
 from app.common.validation import validate_tz_datetime
 from app.models.identity import Identity
+from app.risk.baselines import PeerBaseline
 from app.risk.coverage import CoverageAnalyzer, CoverageSummary, EvidenceIndex
 from app.risk.detections import ALL_RULES
 from app.risk.features import FeatureExtractor
@@ -49,6 +50,7 @@ class RiskEngine:
         events: Sequence,
         index: EvidenceIndex,
         evaluation_time: datetime,
+        peers: Optional[PeerBaseline] = None,
     ) -> IdentityResult:
         validate_tz_datetime(evaluation_time, "evaluation_time")
 
@@ -64,6 +66,7 @@ class RiskEngine:
             resources=tuple(resources),
             events=tuple(e for e in events if e.identity_id == identity.id),
             index=index,
+            peers=peers,
         )
 
         reported: list[RiskFactorAssessment] = []
@@ -111,9 +114,11 @@ class RiskEngine:
     def assess_estate(
         self, estate, evaluation_time: datetime
     ) -> tuple[IdentityResult, ...]:
+        # The cross-identity pre-pass: built once, read by key inside rules.
+        peers = PeerBaseline.build(estate.identities)
         return tuple(
             self.assess_identity(
-                identity, estate.resources, estate.events, estate, evaluation_time
+                identity, estate.resources, estate.events, estate, evaluation_time, peers
             )
             for identity in estate.identities
         )

@@ -7,9 +7,14 @@ shuffled, that neither half is too small to read, that no subject appears in
 both halves, and that evaluating a subset gives the same answer the subset
 would have given inside the full corpus.
 
-What no test can enforce is the discipline: tune against TRAIN, report HOLDOUT,
-and never move a threshold because a holdout number looked bad. The moment you
-do, the holdout is training data and its next reading is worthless.
+What no test can enforce is the discipline: tune against TRAIN, report the
+held-out splits, and never move a threshold because a held-out number looked
+bad. The moment you do, that split is training data and its next reading is
+worthless.
+
+There are two held-out splits. HOLDOUT is contaminated (the rules were written
+with it visible). FRESH was written after the rules were frozen and is the one
+whose number estimates generalisation. Size and shape guards apply to both.
 """
 
 from collections import Counter
@@ -18,6 +23,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.connectors.synthetic import (
+    FRESH,
     HOLDOUT,
     SCENARIOS,
     SPLITS,
@@ -60,9 +66,11 @@ def test_invalid_split_is_rejected():
 
 
 def test_splits_partition_the_corpus():
-    train, holdout = scenarios_for(TRAIN), scenarios_for(HOLDOUT)
-    assert len(train) + len(holdout) == len(SCENARIOS)
-    assert not {s.name for s in train} & {s.name for s in holdout}
+    parts = [{s.name for s in scenarios_for(split)} for split in SPLITS]
+    assert sum(len(p) for p in parts) == len(SCENARIOS)
+    for i, a in enumerate(parts):
+        for b in parts[i + 1 :]:
+            assert not a & b
 
 
 def test_split_membership_is_fixed_not_shuffled():
@@ -84,14 +92,16 @@ def test_no_subject_appears_in_both_splits():
     would teach the rule the holdout answer directly, and the gap between the
     two columns would understate memorisation.
     """
-    train_subjects = {f.subject_id for f in labels(TRAIN)}
-    holdout_subjects = {f.subject_id for f in labels(HOLDOUT)}
-    assert not train_subjects & holdout_subjects
+    subjects = [{f.subject_id for f in labels(split)} for split in SPLITS]
+    for i, a in enumerate(subjects):
+        for b in subjects[i + 1 :]:
+            assert not a & b, a & b
 
 
-def test_holdout_is_large_enough_to_read():
-    positives = [f for f in labels(HOLDOUT) if f.should_fire]
-    negatives = [f for f in labels(HOLDOUT) if not f.should_fire]
+@pytest.mark.parametrize("split", [HOLDOUT, FRESH])
+def test_held_out_split_is_large_enough_to_read(split):
+    positives = [f for f in labels(split) if f.should_fire]
+    negatives = [f for f in labels(split) if not f.should_fire]
     assert len(positives) >= MIN_HOLDOUT_POSITIVES, (
         f"{len(positives)} positives: one miss moves recall by "
         f"{100 / max(len(positives), 1):.0f} points"
@@ -99,20 +109,22 @@ def test_holdout_is_large_enough_to_read():
     assert len(negatives) >= MIN_HOLDOUT_NEGATIVES
 
 
-def test_holdout_carries_both_polarities():
+@pytest.mark.parametrize("split", [HOLDOUT, FRESH])
+def test_held_out_split_carries_both_polarities(split):
     """Precision is not computable on an all-positive holdout."""
-    polarities = {f.should_fire for f in labels(HOLDOUT)}
+    polarities = {f.should_fire for f in labels(split)}
     assert polarities == {True, False}
 
 
-def test_holdout_spans_several_factor_types():
+@pytest.mark.parametrize("split", [HOLDOUT, FRESH])
+def test_held_out_split_spans_several_factor_types(split):
     """A holdout covering one factor measures one rule, not the engine."""
-    kinds = {f.factor_type for f in labels(HOLDOUT)}
+    kinds = {f.factor_type for f in labels(split)}
     assert len(kinds) >= 4, kinds
 
 
-def test_holdout_is_a_reasonable_share():
-    share = len(labels(HOLDOUT)) / len(labels())
+def test_held_out_share_is_reasonable():
+    share = (len(labels(HOLDOUT)) + len(labels(FRESH))) / len(labels())
     assert 0.2 <= share <= 0.45, share
 
 
@@ -159,29 +171,30 @@ def test_split_outcomes_agree_with_the_full_corpus():
 
 def test_label_counts_add_up():
     full = evaluate(ANCHOR)
-    train = evaluate(ANCHOR, split=TRAIN)
-    holdout = evaluate(ANCHOR, split=HOLDOUT)
+    parts = [evaluate(ANCHOR, split=split) for split in SPLITS]
     for field in (
         "true_positives",
         "false_positives",
         "false_negatives",
         "true_negatives",
     ):
-        assert getattr(full, field) == getattr(train, field) + getattr(holdout, field)
+        assert getattr(full, field) == sum(getattr(m, field) for m in parts)
 
 
 def test_metrics_carry_their_split_label():
     assert evaluate(ANCHOR, split=TRAIN).split == TRAIN
     assert evaluate(ANCHOR, split=HOLDOUT).split == HOLDOUT
+    assert evaluate(ANCHOR, split=FRESH).split == FRESH
     assert evaluate(ANCHOR).split == "all"
 
 
 # --- The reported gap ------------------------------------------------------
 
 
-def test_comparison_report_renders_both_columns():
+def test_comparison_report_renders_every_column():
     report = compare_splits(ANCHOR)
-    assert "train" in report and "holdout" in report and "gap" in report
+    for column in ("train", "holdout", "fresh", "gap"):
+        assert column in report
 
 
 def test_holdout_does_not_collapse():
@@ -199,7 +212,8 @@ def test_holdout_does_not_collapse():
     )
 
 
-def test_no_negative_control_fires_in_either_split():
-    for split in SPLITS:
+def test_no_negative_control_fires_in_the_tuned_splits():
+    """FRESH is excluded on purpose; its false alarms are pinned in test_engine."""
+    for split in (TRAIN, HOLDOUT):
         m = evaluate(ANCHOR, split=split)
         assert m.false_alarms() == (), (split, m.false_alarms())

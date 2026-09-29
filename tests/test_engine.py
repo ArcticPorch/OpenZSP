@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.connectors.synthetic import SCENARIOS, TRAIN, SyntheticConnector
+from app.connectors.synthetic import FRESH, HOLDOUT, SCENARIOS, TRAIN, SyntheticConnector
 from app.normalize.normalizer import Normalizer
 from app.risk import scoring
 from app.risk.coverage import CoverageAnalyzer
@@ -234,12 +234,38 @@ def test_detection_meets_calibration_floors():
     assert m.specificity >= MIN_SPECIFICITY, format_report(m)
 
 
-def test_no_negative_control_fires():
-    """The controls are the only firings we can be certain would be wrong."""
-    m = evaluate(ANCHOR)
-    assert m.false_alarms() == (), [
-        (o.subject_id, o.factor_type) for o in m.false_alarms()
-    ]
+def test_no_negative_control_fires_where_tuning_could_see_it():
+    """
+    The controls are the only firings we can be certain would be wrong.
+
+    Asserted on TRAIN and HOLDOUT only. FRESH false alarms are a *measurement*
+    of generalisation, pinned exactly below -- a test demanding zero there
+    would pressure the next person to tune against FRESH until it passed.
+    """
+    for split in (TRAIN, HOLDOUT):
+        m = evaluate(ANCHOR, split=split)
+        assert m.false_alarms() == (), [
+            (o.subject_id, o.factor_type) for o in m.false_alarms()
+        ]
+
+
+def test_fresh_false_alarms_are_exactly_the_recorded_ones():
+    """
+    The one FRESH reading of 2026-09-29, pinned so it cannot drift silently.
+
+    Each is a legitimate situation whose legitimacy lives in context the
+    engine cannot see: an emergency account that is meant to sit unused, an
+    annual job with too little history for its rhythm to count, and two
+    auditors who are a minority -- but not an absence -- among the ledger's
+    holders. If this set shrinks, check the change was made against TRAIN.
+    """
+    m = evaluate(ANCHOR, split=FRESH)
+    assert {(o.subject_id, o.factor_type) for o in m.false_alarms()} == {
+        ("breakglass_root", "STALE_ACCESS"),
+        ("svc_annual_filing", "STALE_ACCESS"),
+        ("ahmed", "CONTEXT_MISMATCH"),
+        ("audit_colleague", "CONTEXT_MISMATCH"),
+    }
 
 
 def test_unlabelled_firings_are_reported_not_hidden():
@@ -258,22 +284,16 @@ def test_unlabelled_firings_are_reported_not_hidden():
 
 def test_known_misses_are_exactly_the_documented_ones():
     """
-    Two labelled findings do not fire, each for a reason worth keeping visible.
+    Every labelled positive fires, in every split. If one stops, the change
+    was a regression worth catching.
 
-    oscar/CONTEXT_MISMATCH needs peer-group baselines. agent_ops is privilege
-    creep -- no single grant is excessive, the monthly accumulation is -- and no
-    rule reads grant cadence yet. If this set changes, the change was either an
-    improvement worth recording or a regression worth catching.
-
-    frank/EXCESSIVE_PRIVILEGE used to be a third. It was removed as a label on
-    review (it double-counted his departure, which STALE_ACCESS reports), not
-    fixed by a rule -- see the comment on his scenario.
+    History, because an empty set hides it: oscar/CONTEXT_MISMATCH was fixed by
+    `peer_access_outlier.v1` and agent_ops/EXCESSIVE_PRIVILEGE by
+    `privilege_creep.v1` (both 2026-09-29, tuned on TRAIN). frank's was removed
+    as a label on review, not fixed -- it double-counted his departure.
     """
     m = evaluate(ANCHOR)
-    assert {(o.subject_id, o.factor_type) for o in m.misses()} == {
-        ("oscar", "CONTEXT_MISMATCH"),
-        ("agent_ops", "EXCESSIVE_PRIVILEGE"),
-    }
+    assert {(o.subject_id, o.factor_type) for o in m.misses()} == set()
 
 
 def test_metrics_are_deterministic():

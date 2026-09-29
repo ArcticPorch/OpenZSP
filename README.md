@@ -13,19 +13,22 @@ by default, and should instead request it just-in-time. The engine's job is to f
 access worth converting.
 
 ```
-                 train    holdout
-  precision     100.0%     100.0%
-  recall         94.3%     100.0%
-  specificity   100.0%     100.0%
+                 train    fresh
+  precision     100.0%    76.5%
+  recall        100.0%   100.0%
+  specificity   100.0%    60.0%
 
-  38 labelled scenarios · 63 labels (44 positive, 19 negative controls) · 15 rules · 211 tests
+  60 labelled scenarios · 100 labels (63 positive, 37 negative controls) · 19 rules · 230 tests
 ```
 
-> **Read these numbers carefully.** They are measured on a synthetic corpus written alongside the
-> rules, so they show the rules resist the traps that were anticipated — not real-world accuracy.
-> The holdout split exists, but the rules predate it, so the holdout column isn't a clean
-> generalisation estimate yet. Both limits are explained in the
-> [learning guide](docs/LEARNING_GUIDE.md#6-how-detection-quality-is-measured).
+> **Read these numbers carefully.** TRAIN is where thresholds were tuned, so its 100% is
+> in-sample. **FRESH** is 14 scenarios written *after* the rules were frozen and read exactly once:
+> every real problem was caught, but 4 of 10 legitimate look-alikes were flagged too. Each of those
+> four is legitimate for a reason the engine can't see yet (an emergency account meant to sit
+> unused, an annual job with too little history, auditors reading a ledger). That gap between
+> training and fresh is the honest measure of this engine, and closing it against TRAIN, never
+> against FRESH, is the next cycle. Everything is synthetic. Details are in the
+> [learning guide](docs/LEARNING_GUIDE.md#10-current-status).
 
 ---
 
@@ -44,12 +47,12 @@ used:
 alice                   90.0  CRITICAL confidence 0.95
     [STALE_ACCESS] 1 standing grant(s) have never been exercised, including admin on prod_payments_db.
       -> Convert to JIT-eligible with an approval step and a short TTL, or revoke if no longer needed.
-    [EXCESSIVE_PRIVILEGE] Standing admin on 1 CRITICAL resource(s).
+    [EXCESSIVE_PRIVILEGE] Standing admin on 1 high-value resource(s), 1 of them CRITICAL.
       -> Replace standing access with JIT elevation and an approval gate.
 
 carol                    0.0  LOW      confidence 0.10
     [SUPPRESSED STALE_ACCESS] confidence 0.10 -- 1 standing grant(s) have never been exercised, ...
-    [SUPPRESSED EXCESSIVE_PRIVILEGE] confidence 0.10 -- Standing admin on 1 CRITICAL resource(s).
+    [SUPPRESSED EXCESSIVE_PRIVILEGE] confidence 0.10 -- Standing admin on 1 high-value resource(s), ...
 ```
 
 The difference is that carol's data connector stopped delivering 14 days ago. Her findings still
@@ -67,9 +70,11 @@ normalize/    evidence → identities, grants, resources, events (never drops ac
 models/       a capability taxonomy: ~11 classes of harm instead of 10,000 cloud actions
      ↓
 risk/         features (what happened) + coverage (how much we saw)
-              → 15 rules → confidence floor → probabilistic aggregation
+              + one peer baseline (who else holds each resource)
+              → 19 rules → confidence floor → probabilistic aggregation
      ↓
-evaluation    findings vs ground truth → precision / recall / specificity, per split
+evaluation    findings vs ground truth → precision / recall / specificity,
+              on train / holdout / fresh; threshold sweeps on train only
 ```
 
 A few design decisions that shape the rest:
@@ -83,6 +88,9 @@ A few design decisions that shape the rest:
   example, is the goal state and must never be flagged.
 - **Rates, not counts.** Twelve failed logins in 40 minutes and twelve across a month look the same
   as a count, and only one of them is an attack.
+- **Baselines, not global numbers.** A nightly ETL job reads more in an hour than most people
+  read in a year. Dormancy and bulk-read rules compare an identity to its *own* history, and
+  context rules compare it to the other holders of the same resource.
 - **Deterministic and cited.** No wall clock, no unseeded randomness, content-addressed evidence
   IDs. The same input always produces the same output, and every finding points at its evidence.
 
@@ -97,10 +105,11 @@ python -m venv venv
 # Windows: venv\Scripts\activate      macOS/Linux: source venv/bin/activate
 pip install pytest
 
-python -m pytest -q              # run the 211 tests
-python -m app.main               # train vs holdout detection quality
+python -m pytest -q              # run the 230 tests
+python -m app.main               # train vs holdout vs fresh detection quality
 python -m app.main --full        # whole-corpus report, including misses
 python -m app.main --findings    # every identity's assessment, explained
+python -m app.main --sweep CADENCE_TOLERANCE=1.0,1.25,1.5   # a tuning curve, TRAIN only
 ```
 
 Run everything from the repository root.

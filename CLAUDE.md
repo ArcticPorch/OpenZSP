@@ -35,7 +35,8 @@ app/risk/features.py   FeatureExtractor → IdentityFeatures   (measurements onl
 app/risk/coverage.py   CoverageAnalyzer → CoverageSummary    (how much we saw)
       ↓
 app/risk/rules.py      Rule protocol, RuleContext, RuleOutcome (the contract)
-app/risk/detections.py 15 concrete rules across all 7 factor types
+app/risk/baselines.py  PeerBaseline — the one cross-identity pre-pass, built once per estate
+app/risk/detections.py 19 concrete rules across all 7 factor types
       ↓
 app/risk/scoring.py    confidence, probabilistic aggregation, every tunable
       ↓
@@ -44,14 +45,17 @@ app/risk/engine.py     RiskEngine → IdentityResult (assessment + suppressed)
 app/risk/models.py     risk vocabulary + validated output DTOs
       ↓
 app/risk/evaluation.py scores findings against ground truth → precision/recall
+app/risk/calibration.py threshold sweeps, TRAIN only
 ```
 
 ```bash
-./venv/Scripts/python.exe -m app.main             # train vs holdout
+./venv/Scripts/python.exe -m app.main             # train vs holdout vs fresh
 ./venv/Scripts/python.exe -m app.main --full      # whole-corpus detail
 ./venv/Scripts/python.exe -m app.main --train     # calibration detail
-./venv/Scripts/python.exe -m app.main --holdout   # holdout detail
+./venv/Scripts/python.exe -m app.main --holdout   # holdout detail (contaminated)
+./venv/Scripts/python.exe -m app.main --fresh     # fresh detail -- read once per cycle
 ./venv/Scripts/python.exe -m app.main --findings  # per-identity assessments
+./venv/Scripts/python.exe -m app.main --sweep CADENCE_TOLERANCE=1.0,1.25,1.5   # TRAIN-only curve
 ```
 
 The pipeline is connected end to end — `test_pipeline_reaches_feature_extraction` runs connector → normalizer → features with no hand-built fixtures. `app/risk/models.py` defines the *output* contract the unwritten layers must produce (`RiskAssessment`, `RiskFactorAssessment`, `RiskSubject`).
@@ -75,9 +79,9 @@ The pipeline is connected end to end — `test_pipeline_reaches_feature_extracti
 
 `SyntheticConnector` is a real connector, not a stub, and is the peer of any future AWS reader. Its data is **scenario-driven**: each `Scenario` carries `ExpectedFinding` ground truth, so the generator doubles as a labelled test set for measuring detection. `should_fire=False` marks a negative control (e.g. `active_admin_justified`) — "did not fire" is a tested outcome.
 
-The corpus is **38 scenarios / 63 labels, 44 positive and 19 negative**, sized so a single miss moves recall by ~4 points rather than ~12. `tests/test_corpus.py` enforces that: minimum positive count, a negative-control share between 20% and 50%, and both polarities per factor type. Negative controls are not optional decoration — a rule that fires unconditionally scores perfect recall on an all-positive set, so they are the only thing that makes precision computable.
+The corpus is **60 scenarios / 100 labels, 63 positive and 37 negative**, sized so a single miss moves recall by ~4 points rather than ~12. `tests/test_corpus.py` enforces that: minimum positive count, a negative-control share between 20% and 50%, and both polarities per factor type. Negative controls are not optional decoration — a rule that fires unconditionally scores perfect recall on an all-positive set, so they are the only thing that makes precision computable.
 
-Several scenarios exist as **discriminating pairs**: two identities that are identical in `IdentityFeatures` and differ only in something a naive rule ignores. `burst_then_escalation` vs `failed_logins_spread_thin` (both `failed_authentication_count == 12`, one is 18/hour and one is 0.4/day). `dormant_standing_admin` vs `recently_granted_not_yet_used` (feature-identical; only `granted_at` differs, 420 days vs 2). `service_account_sprawl` vs `read_only_analyst_wide_access` (both 6 standing grants; admin-on-production vs read-on-dashboards). `active_admin_justified` vs `admin_on_medium_internal_tool` (bob vs ines: same standing admin, same usage; CRITICAL vs MEDIUM resource — the TRAIN-side trap on the privilege rule's sensitivity line). `stale_connector_blind_spot` vs `incomplete_but_fresh_collection` (a connector that stopped vs one that only ever saw half). Keep these pairs feature-identical — if one drifts apart it silently stops testing anything.
+Several scenarios exist as **discriminating pairs**: two identities that are identical in `IdentityFeatures` and differ only in something a naive rule ignores. `burst_then_escalation` vs `failed_logins_spread_thin` (both `failed_authentication_count == 12`, one is 18/hour and one is 0.4/day). `dormant_standing_admin` vs `recently_granted_not_yet_used` (feature-identical; only `granted_at` differs, 420 days vs 2). `service_account_sprawl` vs `read_only_analyst_wide_access` (both 6 standing grants; admin-on-production vs read-on-dashboards). `active_admin_justified` vs `admin_on_medium_internal_tool` (bob vs ines: same standing admin, same usage; CRITICAL vs MEDIUM resource — the TRAIN-side trap on the privilege rule's sensitivity line). `stale_connector_blind_spot` vs `incomplete_but_fresh_collection` (a connector that stopped vs one that only ever saw half). The 2026-09-29 pairs each turn on context outside the feature vector: `agent_ops` vs `agent_intake` (same five grants; a month apart vs one afternoon), `otto` vs `pablo` (standing read on CRITICAL; secret store vs database), `svc_quarterly_recon` vs `svc_semiannual_audit` (silence judged against the identity's own rhythm), `ravi` vs `svc_nightly_etl` (80 reads in 40 minutes; first time vs every night), `oscar` vs `sonia` (who else holds the resource). Keep these pairs feature-identical — if one drifts apart it silently stops testing anything.
 
 Every `RiskFactorType` now has both a positive label and a negative control; `test_corpus.py` asserts that with no exemptions, so a new factor type cannot be claimed as covered until both exist.
 
@@ -97,37 +101,49 @@ Scoring is **rules carrying their own confidence**, aggregated probabilistically
 ### The rule contract
 
 - A **non-finding is a first-class result**, not `None` — `should_fire=False` controls need "ran and declined" to be representable. `RuleOutcome` rejects `fired=False` carrying scores, a description, a subject, or evidence ids.
-- `RuleContext` is deliberately **not** the `Estate`. A rule that can reach the whole estate grows cross-identity logic, and peer-group baselines are a different layer with different performance characteristics. Every rule stays O(1) in estate size.
+- `RuleContext` is deliberately **not** the `Estate`. A rule that can reach the whole estate grows cross-identity logic. Every rule stays O(1) in estate size; the one cross-identity fact (`peers`, a precomputed `PeerBaseline`) is read by key.
 - **Assessment ids are derived** from `(rule_id, subject)`, never generated, so two runs over identical evidence produce byte-identical, diffable assessments — the same reproducibility guarantee `content_id` gives evidence.
 - `rule_id` is authored and versioned (`"stale_standing_access.v1"`), not derived from the class name: renaming a class must not change ids already stored in assessments.
 
-### Detection quality, and the train/holdout split
+### Detection quality, and the three splits
 
-`Scenario.split` is `TRAIN` (25 scenarios, 47 labels) or `HOLDOUT` (13 scenarios, 16 labels). Membership is **declared per scenario, never shuffled**: a random split would move every run, so a metric could improve purely because the seed changed and yesterday's number would be unreproducible.
+`Scenario.split` is `TRAIN` (33 scenarios, 61 labels), `HOLDOUT` (13 scenarios, 16 labels) or `FRESH` (14 scenarios, 23 labels). Membership is **declared per scenario, never shuffled**: a random split would move every run, so a metric could improve purely because the seed changed and yesterday's number would be unreproducible.
+
+- **TRAIN** — tune here, freely.
+- **HOLDOUT** — contaminated (split off after the rules were written with it visible). Never quote it.
+- **FRESH** — written 2026-09-29 *after* the rules were frozen, from real-world situations, and read **once**. The only column that estimates generalisation. After a reading it is **spent**: the next calibration cycle needs new FRESH scenarios, ideally written by someone who has not read `detections.py`.
 
 ```
-                 train    holdout       gap
-  precision     100.0%     100.0%     +0.0%
-  recall         94.3%     100.0%     +5.7%
-  specificity   100.0%     100.0%     +0.0%
+                 train   holdout   fresh      gap
+  precision     100.0%    100.0%   76.5%   -23.5%
+  recall        100.0%    100.0%  100.0%    +0.0%
+  specificity   100.0%    100.0%   60.0%   -40.0%
 ```
 
-Whole corpus: precision 100%, recall 95.5%, F1 97.7%, 19/19 negative controls held, **zero unlabelled firings**. The rise from 91.7% train recall on 2026-09-26 is a label change (frank, below), not better detection.
+Whole corpus: 63 TP · 4 FP · 0 FN · 33 TN, zero unlabelled firings. **Quote FRESH, not TRAIN.**
 
-**The holdout is contaminated today and its number should not be quoted.** The rules were authored before the split existed, with every scenario visible, so nothing here was genuinely held out. The machinery's value starts from the *next* calibration cycle. The current +5.7% gap is noise, not evidence of generalisation — on 9 positive labels, one miss moves holdout recall by 11 points, which is why a 100% reading means very little.
+**The discipline:** tune against TRAIN, freeze, read FRESH once, and never move a threshold because a FRESH number looked bad — the moment you do, FRESH is training data. `app/risk/calibration.py` enforces part of this: `sweep()` raises on any split but TRAIN. `test_detection_meets_calibration_floors` is measured on TRAIN only (floors 0.90 precision / 0.85 recall / 1.00 specificity; raise them when detection genuinely improves, never lower one to make a change pass). `test_no_negative_control_fires_where_tuning_could_see_it` covers TRAIN and HOLDOUT only; FRESH false alarms are a *measurement*, pinned exactly by `test_fresh_false_alarms_are_exactly_the_recorded_ones`:
 
-**The discipline no test can enforce:** tune against TRAIN, report HOLDOUT, and never move a threshold because a holdout number looked bad. The moment you do, the holdout is training data and its next reading is worthless. `test_detection_meets_calibration_floors` is therefore measured on TRAIN only — a floor held against the holdout would convert it into training data the first time someone edited a threshold to make the test pass. Floors: 0.90 precision / 0.85 recall / 1.00 specificity. Raise them when detection genuinely improves; never lower one to make a change pass.
+- `breakglass_root / STALE_ACCESS` — an emergency account is meant to sit unused; nothing models that.
+- `svc_annual_filing / STALE_ACCESS` — three yearly runs = two gaps, under `MIN_CADENCE_GAPS = 3`, so the 90-day floor applies.
+- `ahmed`, `audit_colleague / CONTEXT_MISMATCH` — auditors are 1 of 5 other ledger holders (0.20 ≤ 0.25). A sweep showed 0.0 is also all-correct on TRAIN; **do not change it because of FRESH**. Fix it by adding a minority-peer trap to TRAIN, then write a new FRESH set.
 
-`tests/test_split.py` guards the rest: the splits partition cleanly, **no subject appears in both halves** (leakage would teach the holdout answer directly), the holdout carries both polarities and spans ≥4 factor types, and a per-split score agrees pair-for-pair with the whole-corpus score. That last one rests on scenario independence — already asserted — which is what makes evaluating a subset sound rather than an artifact of what got left out.
+`tests/test_split.py` guards the rest: the splits partition cleanly, **no subject appears in two splits**, both held-out splits carry both polarities, span ≥4 factor types and have ≥6 positives / ≥3 negatives, and a per-split score agrees pair-for-pair with the whole-corpus score. That last one rests on scenario independence — and, for the peer rule, on `test_no_resource_is_shared_between_scenarios`.
 
-Two labelled findings deliberately do not fire, pinned by `test_known_misses_are_exactly_the_documented_ones` so the set cannot drift silently:
+There are **no known misses** (`test_known_misses_are_exactly_the_documented_ones` pins the empty set). oscar was fixed by `peer_access_outlier.v1`, agent_ops by `privilege_creep.v1`. `frank / EXCESSIVE_PRIVILEGE` was removed as a label on review (it double-counted his departure). **Never remove or flip a label because the engine misses it** — decide on what the factor type means, write the reason on the scenario, and report the metric change as a label change. Triage of an unlabelled firing follows the truth even when it lowers the number (`audit_colleague`).
 
-- `oscar / CONTEXT_MISMATCH` — needs peer-group baselines, deferred on purpose.
-- `agent_ops / EXCESSIVE_PRIVILEGE` — privilege creep (one grant a month, never reviewed); no rule reads grant cadence yet.
+The privilege rule's sensitivity line is pinned from both sides in TRAIN: bob CRITICAL fires, `hugo` HIGH fires, `ines` MEDIUM must not; `henry` LOW guards it in holdout. HIGH was a labelling decision by the user on 2026-09-29: whoever needs admin on a HIGH resource should request it JIT.
 
-`frank / EXCESSIVE_PRIVILEGE` was a third until it was removed as a label on review: it double-counted his departure, which `STALE_ACCESS` already reports. **Never remove or flip a label because the engine misses it** — decide on what the factor type means, write the reason on the scenario, and report the metric change as a label change.
+### Calibration
 
-The privilege rule's sensitivity line is trapped at MEDIUM (`ines`, train) and LOW (`henry`, holdout), but **not at HIGH** — no label yet says whether standing admin on a HIGH resource is a finding.
+`python -m app.main --sweep NAME=v1,v2,...` evaluates TRAIN once per value of a constant in `detections.py` or `scoring.py` and reports the widest all-correct range (the *plateau*). One calibration cycle has been run: criterion declared first (midpoint of the plateau; keep the current value if comfortably inside), `CADENCE_TOLERANCE` moved 1.5 → 1.25 (plateau 0.66–1.76), FRESH read once afterwards. `MIN_REPORTING_CONFIDENCE` (0.10–0.95), `BULK_READ_BASELINE_MULTIPLIER` (1.5–80) and `PEER_MAX_SAME_DEPT_SHARE` (0.0–0.9) were left alone: those plateaus are so wide that TRAIN barely constrains them, which is itself a gap to close with new TRAIN scenarios.
+
+### Baselines
+
+Two kinds, both built so rules stay O(1):
+
+- **Per-identity history**, computed inside a rule from `ctx.events`: `dormant_identity.v2` uses the median gap between activity *days* (threshold = max(90, 1.25 × median) once ≥3 gaps exist — it can only raise the floor); `bulk_read_burst.v1` compares this week's busiest hour of HIGH+ reads to the busiest hour before this week.
+- **Cross-identity**, `app/risk/baselines.py` `PeerBaseline`: built **once per estate** by `RiskEngine.assess_estate` and passed as `RuleContext.peers`. It is resource-centric (who else holds this resource, and in which department) rather than department-centric, because departments are free-text strings shared by coincidence across scenarios, which would make a split's score depend on the rest of the corpus. `assess_identity` without a baseline leaves `peers=None` and the peer rule declines.
 
 **Unlabelled firings are not counted as false positives.** A firing on a pair the corpus never labelled is reported in its own bucket and must be triaged into ground truth over time; precision is an upper bound while any remain. Counting them as errors would understate precision, ignoring them would overstate it. Note the selection bias: unlabelled firings are surfaced *by* the engine, so a detection it misses entirely never gets proposed as a label. That asymmetry is another argument for a held-out split.
 
@@ -143,7 +159,9 @@ Note `carol` and `priya` both carry a deliberately unexercised grant. Without it
 
 ### Rule conventions
 
-- Thresholds live in module constants at the top of `detections.py`, so calibration is a diff against one block.
+- Thresholds live in module constants at the top of `detections.py`, so calibration is a diff against one block, and `calibration.sweep` can override them by name.
+- A rule whose behaviour changes gets a new `rule_id` version (`dormant_identity.v2`); one whose *name* would now lie gets a new id (`standing_privilege_on_critical.v1` → `standing_privilege_on_high_value.v1`).
+- Never derive an evidence/event id from a timestamp: under a shifted anchor it collides with a different record (`test_no_wall_clock_dependency`).
 - **Rates, never raw counts**, for anything burst-shaped. `_max_in_window` is an O(n) two-pointer sweep; `failed_authentication_count` is identical (12) for a credential attack and a forgetful salesperson.
 - A grant is exercised by an event the grant **actually authorises** (`GRANT_EXERCISED_BY`), not merely by touching the resource. A read does not exercise a delete grant — that bug hid julia's standing delete on a crown jewel. A successful `login` exercises any grant on that resource; leaving it out produced two substantive false positives.
 - No rule special-cases a scenario. The blind-spot controls are handled entirely by the confidence floor.

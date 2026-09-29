@@ -6,6 +6,10 @@ class ResourceType(Enum):
     CLOUD_ACCOUNT = "cloud_account"
     SERVER = "server"
     API = "api"
+    # Vaults, secret managers, KMS/HSM key stores. Singled out because READ on
+    # one is not ordinary read: a secret is someone else's access, so reading
+    # it confers whatever that credential confers.
+    SECRET_STORE = "secret_store"
 
 
 class Exposure(Enum):

@@ -34,6 +34,7 @@ from app.evidence.models import RecordKind
 from app.models.event import Event
 from app.models.identity import Identity
 from app.models.resource import Resource
+from app.risk.baselines import PeerBaseline
 from app.risk.coverage import CoverageSummary, EvidenceIndex
 from app.risk.features import IdentityFeatures
 from app.risk.models import RiskFactorAssessment, RiskFactorType, RiskSubject
@@ -69,6 +70,11 @@ class RuleContext:
     # the size of the estate.
     events: tuple[Event, ...] = ()
     index: Optional[EvidenceIndex] = None
+    # Precomputed once per estate by the engine, never built by a rule. It is
+    # the only cross-identity fact a rule may read, and it is read by key, so
+    # rules stay O(1) in estate size. None means "no baseline was computed"
+    # (a single-identity assessment), and peer rules decline rather than guess.
+    peers: Optional[PeerBaseline] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.identity, Identity):
@@ -92,6 +98,8 @@ class RuleContext:
                     f"event {ev.id} belongs to '{ev.identity_id}', not "
                     f"'{self.identity.id}'"
                 )
+        if self.peers is not None and not isinstance(self.peers, PeerBaseline):
+            raise TypeError(f"peers must be a PeerBaseline, got {type(self.peers).__name__}")
         if self.coverage.identity_id != self.identity.id:
             raise ValueError(
                 f"coverage is for identity '{self.coverage.identity_id}' but context "

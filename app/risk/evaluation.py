@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from app.connectors.synthetic import HOLDOUT, TRAIN, SyntheticConnector, scenarios_for
+from app.connectors.synthetic import FRESH, HOLDOUT, TRAIN, SyntheticConnector, scenarios_for
 from app.normalize.normalizer import Normalizer
 from app.risk.engine import RiskEngine
 
@@ -217,32 +217,41 @@ def compare_splits(
     """
     The number that actually means something: tuned-on versus never-opened.
 
-    The gap between the two columns estimates how much of the score is
-    memorisation. A small gap suggests the rules encode transferable structure;
-    a large one says they were fitted to scenarios that happened to be visible.
+    Three columns. TRAIN is where thresholds are tuned. HOLDOUT is the original
+    held-out half, contaminated because the rules were written with it visible.
+    FRESH was written after the rules were frozen; the gap is FRESH minus TRAIN,
+    and it estimates how much of the training score is memorisation.
     """
-    train = evaluate(anchor_time, engine=engine, split=TRAIN)
-    holdout = evaluate(anchor_time, engine=engine, split=HOLDOUT)
+    splits = [
+        (name, evaluate(anchor_time, engine=engine, split=name))
+        for name in (TRAIN, HOLDOUT, FRESH)
+    ]
+    train, fresh = splits[0][1], splits[2][1]
 
-    def row(label, a, b):
-        return "  {:<12} {:>7.1%} {:>10.1%} {:>+9.1%}".format(label, a, b, b - a)
+    def row(label, attr):
+        vals = [getattr(m, attr) for _, m in splits]
+        return "  {:<12} {:>7.1%} {:>9.1%} {:>7.1%} {:>+8.1%}".format(
+            label, *vals, getattr(fresh, attr) - getattr(train, attr)
+        )
 
     lines = [
-        "OpenZSP detection quality -- train vs holdout",
+        "OpenZSP detection quality -- train vs holdout vs fresh",
         "=" * 58,
-        "  {:<12} {:>7} {:>10} {:>9}".format("", "train", "holdout", "gap"),
-        row("precision", train.precision, holdout.precision),
-        row("recall", train.recall, holdout.recall),
-        row("F1", train.f1, holdout.f1),
-        row("specificity", train.specificity, holdout.specificity),
+        "  {:<12} {:>7} {:>9} {:>7} {:>8}".format("", "train", "holdout", "fresh", "gap"),
+        row("precision", "precision"),
+        row("recall", "recall"),
+        row("F1", "f1"),
+        row("specificity", "specificity"),
         "",
-        "  train:   {} positive labels, {} negative controls".format(
-            train.true_positives + train.false_negatives,
-            train.true_negatives + train.false_positives,
-        ),
-        "  holdout: {} positive labels, {} negative controls".format(
-            holdout.true_positives + holdout.false_negatives,
-            holdout.true_negatives + holdout.false_positives,
-        ),
     ]
+    for name, m in splits:
+        lines.append(
+            "  {:<8} {} positive labels, {} negative controls, {} unlabelled".format(
+                name + ":",
+                m.true_positives + m.false_negatives,
+                m.true_negatives + m.false_positives,
+                len(m.unlabelled_firings),
+            )
+        )
+    lines.append("  gap = fresh - train. holdout is contaminated; do not quote it.")
     return "\n".join(lines)
