@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 1. **Read `TODO.md`.** It is the working plan. Work proceeds item by item in its order; tick each item (`- [x]`) in the same commit that completes it, and add new items there rather than anywhere else.
 2. **Current phase: graph connectivity & blast radius** (TODO "Next"). Detection & calibration is finished; its parked items stay parked unless the user asks. **JIT access is out of scope** for this project.
-3. **Two personal guides live outside the repo** (paths in the gitignored `CLAUDE.local.md`); neither is ever committed, linked or copied into the repo:
+3. **Two personal guides sit in the repo root but are gitignored** (`*Learning_Guide*.md`; details in the gitignored `CLAUDE.local.md`). Never commit them (no `git add -f`), link them from tracked files, or rename them out of the ignore pattern:
    - the original **learning guide** — frozen 2026-09-29. Never read it for tasks, never edit it.
    - the **graph learning guide** — the user's notes for this phase. **Update it whenever a graph item in `TODO.md` is completed**: fill that item's section with a few simple lines (what was built → why this way → the one thing to remember) and add a one-line entry to its decisions log for any design choice. Plain language, no code dumps; it is for understanding the architecture, not a spec. `TODO.md` stays the to-do list.
 4. Keep `README.md` headline numbers/counts in step with `python -m app.main` whenever they change; it must not link to any learning guide.
