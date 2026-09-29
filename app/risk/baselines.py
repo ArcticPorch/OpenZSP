@@ -28,7 +28,7 @@ are in Marketing".
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
-from app.models.identity import Identity
+from app.models.identity import Identity, IdentityType
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,11 @@ class PeerBaseline:
     def build(cls, identities: Iterable[Identity]) -> "PeerBaseline":
         by_resource: dict[str, set[tuple[str, str]]] = {}
         for identity in identities:
+            # A role is not a colleague. Its department is whoever owns it,
+            # and anyone who can assume it holds its grants, so counting it
+            # would say "Finance holds the ledger" on the role's behalf.
+            if identity.identity_type is IdentityType.ROLE:
+                continue
             for perm in identity.permissions:
                 by_resource.setdefault(perm.resource_id, set()).add(
                     (identity.id, identity.department)

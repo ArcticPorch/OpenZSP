@@ -49,9 +49,10 @@ class Estate:
     """
     A normalized snapshot of the identity estate, plus its provenance index.
 
-    "Estate" rather than "graph" deliberately: nothing here models access *paths*
-    yet. Path/graph analysis (who can reach what by assuming which role) is a
-    later layer and a different data structure.
+    "Estate" rather than "graph" deliberately: nothing here models access *paths*.
+    It carries the facts a path is built from -- grants, and which resources are
+    also principals (`Resource.principal_id`) -- but traversing them is a later
+    layer and a different data structure.
     """
 
     identities: tuple[Identity, ...]
@@ -120,6 +121,15 @@ def _parse_dt(raw: Any, field_name: str) -> datetime:
     return parsed
 
 
+def _optional_str(payload: dict[str, Any], key: str) -> Optional[str]:
+    raw = payload.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise _RecordError(f"{key} must be a non-empty string, got {raw!r}")
+    return raw
+
+
 def _parse_bool(raw: Any, field_name: str) -> bool:
     if not isinstance(raw, bool):
         raise _RecordError(f"{field_name} must be a boolean, got {type(raw).__name__}")
@@ -177,9 +187,11 @@ class Normalizer:
 
         # -- Resources --
         resources: dict[str, Resource] = {}
+        resource_winners: dict[str, str] = {}
         for entity_id, group in self._group(buckets[RecordKind.RESOURCE], "resource_id", issues):
             try:
                 resources[entity_id] = self._build_resource(entity_id, _winner(group))
+                resource_winners[entity_id] = _winner(group).id
             except _RecordError as exc:
                 issues.append(
                     NormalizationIssue(_winner(group).id, RecordKind.RESOURCE, str(exc))
@@ -241,6 +253,20 @@ class Normalizer:
                         perm.id,
                         RecordKind.PERMISSION_GRANT,
                         f"grant references unknown identity '{orphan_identity}'",
+                    )
+                )
+
+        # A role link pointing at an identity we never saw is kept, like a grant
+        # on an unknown resource: dropping it would erase every path through
+        # that role, which understates access.
+        for res in resources.values():
+            if res.principal_id is not None and res.principal_id not in identities:
+                issues.append(
+                    NormalizationIssue(
+                        resource_winners[res.id],
+                        RecordKind.RESOURCE,
+                        f"assumable as unknown principal '{res.principal_id}'; "
+                        "link retained",
                     )
                 )
 
@@ -328,6 +354,8 @@ class Normalizer:
             # Optional: absent exposure evidence means INTERNAL, not unknown.
             # See the note on Exposure for why the safe default is the quiet one.
             exposure=_parse_enum(Exposure, p.get("exposure", "internal"), "exposure"),
+            # Optional: most resources are not principals.
+            principal_id=_optional_str(p, "principal_id"),
         )
 
     @staticmethod

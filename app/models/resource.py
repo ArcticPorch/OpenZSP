@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
 class ResourceType(Enum):
     DATABASE = "database"
     REPOSITORY = "repository"
@@ -49,6 +50,17 @@ class Resource:
     resource_type: ResourceType
     sensitivity: Sensitivity
     exposure: Exposure = Exposure.INTERNAL
+    # Set when this resource is also a principal: impersonating it makes you
+    # the identity named here, and you inherit that identity's grants. A role
+    # has two sides -- something you are granted (this resource) and something
+    # that holds grants (that identity) -- and this pointer is the only thing
+    # joining them. Explicit rather than a shared id, because two ids that
+    # happen to match must not invent an access path.
+    principal_id: Optional[str] = None
+
+    @property
+    def is_assumable(self) -> bool:
+        return self.principal_id is not None
 
     @property
     def is_externally_exposed(self) -> bool:

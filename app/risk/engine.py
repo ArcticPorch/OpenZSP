@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional, Sequence
 
 from app.common.validation import validate_tz_datetime
-from app.models.identity import Identity
+from app.models.identity import Identity, IdentityType
 from app.risk.baselines import PeerBaseline
 from app.risk.coverage import CoverageAnalyzer, CoverageSummary, EvidenceIndex
 from app.risk.detections import ALL_RULES
@@ -37,6 +37,18 @@ class IdentityResult:
     coverage: CoverageSummary
     suppressed: tuple[RiskFactorAssessment, ...] = ()
     rule_errors: tuple[tuple[str, str], ...] = ()
+
+
+def is_assessed(identity: Identity) -> bool:
+    """
+    Whether the per-identity rules judge this identity as a subject.
+
+    Roles are not, yet. Nobody logs in as a role -- activity is recorded against
+    whoever assumed it -- so every role would look dormant to the staleness
+    rules and fire on nothing. A role's grants are still real: they count
+    against whoever can reach the role, which is the graph layer's job.
+    """
+    return identity.identity_type is not IdentityType.ROLE
 
 
 class RiskEngine:
@@ -121,6 +133,7 @@ class RiskEngine:
                 identity, estate.resources, estate.events, estate, evaluation_time, peers
             )
             for identity in estate.identities
+            if is_assessed(identity)
         )
 
     @staticmethod

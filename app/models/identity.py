@@ -6,6 +6,10 @@ class IdentityType(Enum):
     HUMAN = "human"
     SERVICE = "service"
     AI_agent = "ai_agent"
+    # A principal nobody logs in as: it is only ever *become*, by impersonating
+    # the resource that points at it (`Resource.principal_id`). It holds grants
+    # like any identity, which is what makes access paths multi-hop.
+    ROLE = "role"
 
 @dataclass
 class Identity:
