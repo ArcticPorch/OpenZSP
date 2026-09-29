@@ -40,6 +40,7 @@ app/models/            domain facts        Identity, Permission, Resource, Event
       ↓
 app/graph/graph.py     IdentityGraph: grant / becomes / governs edges   (structure only, timeless)
 app/graph/semantics.py what a grant edge means: holds · assumes · manages-permission
+app/graph/reach.py     reach(graph, id, max_hops, usable) → Reach: (resource, capability) + one shortest path each
       ↓
 app/risk/features.py   FeatureExtractor → IdentityFeatures   (measurements only)
 app/risk/coverage.py   CoverageAnalyzer → CoverageSummary    (how much we saw)
@@ -221,6 +222,8 @@ Two optional `Resource` links, both **explicit** so a coincidental id match can 
 - `governs` — this resource is a control plane: permission management on it reaches every resource listed. Scope is data from the source, never guessed ("everything" would give every IAM admin the same maximal reach).
 
 `IdentityGraph` keeps **every** grant as an edge (JIT and expired included) with the `Permission` on it; whether an edge counts at time t is traversal's call. Nodes are keyed by `(kind, id)`; unknown references become bare nodes. `semantics.py` states meanings **per capability** (`can_assume`, `manages_permission`, `effective_capabilities`) so traversal can apply them to derived capabilities: manage-permission ⇒ effectively every capability on the resource and on what it governs; `impersonate`/`manage_identity`/`manage_permission`/`admin` on an assumable resource ⇒ become its principal.
+
+`reach()` walks level by level. **A hop is a grant or governs edge; crossing `becomes` is free** (one role = two hops). It keeps **one shortest path** per (resource, capability), ties broken by sorted edge order, so paths are deterministic citations. Which grants count is always the caller's explicit `usable` (`standing_only`, `active_at(t)`, `any_grant`) — never a default. `truncated` is True when the hop limit stopped the walk with edges left to follow: "nothing more" and "stopped looking" are different claims.
 
 ### Exposure
 
