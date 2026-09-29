@@ -119,3 +119,18 @@ def test_calibrated_value_sits_inside_the_train_plateau():
     """The 2026-09-29 calibration: 1.25 is the midpoint of (0.66, 1.76)."""
     assert detections.CADENCE_TOLERANCE == 1.25
     assert 120 / 182 < detections.CADENCE_TOLERANCE < 160 / 91
+
+
+def test_cycle_two_values_are_the_only_or_middle_all_correct_ones():
+    """
+    Cycle 2: MIN_CADENCE_GAPS has exactly one all-correct value; the peer
+    share sits mid-way through [0, 0.2). Pinned so a later edit has to
+    re-run the sweep rather than drift.
+    """
+    gaps = calibration.sweep("MIN_CADENCE_GAPS", [1, 2, 3], ANCHOR)
+    assert [p.perfect for p in gaps] == [False, True, False]
+    assert detections.MIN_CADENCE_GAPS == 2
+
+    share = calibration.sweep("PEER_MAX_SAME_DEPT_SHARE", [0.0, 0.1, 0.19, 0.2], ANCHOR)
+    assert [p.perfect for p in share] == [True, True, True, False]
+    assert detections.PEER_MAX_SAME_DEPT_SHARE == 0.1

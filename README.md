@@ -13,22 +13,23 @@ by default, and should instead request it just-in-time. The engine's job is to f
 access worth converting.
 
 ```
-                 train    fresh
-  precision     100.0%    76.5%
-  recall        100.0%   100.0%
-  specificity   100.0%    60.0%
+                 train   fresh v1   fresh v2
+  precision     100.0%     76.5%      86.7%
+  recall        100.0%    100.0%     100.0%
+  specificity   100.0%     60.0%      77.8%
 
-  60 labelled scenarios · 100 labels (63 positive, 37 negative controls) · 19 rules · 230 tests
+  82 labelled scenarios · 132 labels (81 positive, 51 negative controls) · 19 rules · 233 tests
 ```
 
-> **Read these numbers carefully.** TRAIN is where thresholds were tuned, so its 100% is
-> in-sample. **FRESH** is 14 scenarios written *after* the rules were frozen and read exactly once:
-> every real problem was caught, but 4 of 10 legitimate look-alikes were flagged too. Each of those
-> four is legitimate for a reason the engine can't see yet (an emergency account meant to sit
-> unused, an annual job with too little history, auditors reading a ledger). That gap between
-> training and fresh is the honest measure of this engine, and closing it against TRAIN, never
-> against FRESH, is the next cycle. Everything is synthetic. Details are in the
-> [learning guide](docs/LEARNING_GUIDE.md#10-current-status).
+> **Read these numbers carefully.** TRAIN is where thresholds are tuned, so its 100% is in-sample.
+> Each **FRESH** column is a set of scenarios written *after* the rules were frozen and read
+> exactly once. After the first reading, the failure *shapes* it exposed (an emergency account
+> meant to sit unused, a job with little history, a department that is a minority but not absent
+> among a resource's holders) were turned into new training cases in different domains. The
+> rules were recalibrated on TRAIN only, and a second, new fresh set was read once. The rise from
+> v1 to v2 is measured on scenarios the tuning never saw. The two remaining false alarms are named
+> limits: a brand-new integration with no history, and departments with no notion of adjacent
+> teams. Everything is synthetic.
 
 ---
 
@@ -116,15 +117,14 @@ Run everything from the repository root.
 
 ## Learn more
 
-**[docs/LEARNING_GUIDE.md](docs/LEARNING_GUIDE.md)** explains the whole project: the problem
-domain, every layer and the reasoning behind it, how detection is measured, the bugs found along the
-way and what each one taught, and what's next.
+**[CLAUDE.md](CLAUDE.md)** documents the architecture layer by layer, with the reasoning behind
+each design decision and the conventions the tests enforce.
 
 ## Status
 
-This is a research and learning project focused on detection engineering. It runs on synthetic,
-labelled data; there is no connector to a real cloud provider yet. Known gaps and the roadmap are
-in the [learning guide](docs/LEARNING_GUIDE.md#11-whats-next).
+This is a research and learning project focused on detection engineering and calibration, with
+identity attack-path and blast-radius analysis next. It runs on synthetic, labelled data; there is
+no connector to a real cloud provider yet.
 
 ## License
 

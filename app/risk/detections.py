@@ -56,7 +56,10 @@ DORMANT_IDENTITY_DAYS = 90.0
 # below and svc_quarterly_recon above; 1.5 sat 0.26 from the upper edge, 1.25
 # is 0.59 from both. FRESH was read once, after this value was fixed.
 CADENCE_TOLERANCE = 1.25
-MIN_CADENCE_GAPS = 3
+# Calibration cycle 2 (TRAIN only): exactly one value gets every TRAIN label
+# right. 1 lets two data points 280 days apart pass as a "rhythm" (marta); 3
+# calls a half-yearly job with three runs on record dormant (svc_key_rotation).
+MIN_CADENCE_GAPS = 2
 
 # The sensitivity line for standing privilege. HIGH was added on 2026-09-29 as
 # a labelling decision, not a tuning one: standing admin is the thing to
@@ -94,7 +97,10 @@ CREEP_MIN_UNUSED_SHARE = 0.5
 # sit in your department. Needs enough other holders for "nobody like you has
 # this" to mean something.
 PEER_MIN_OTHER_HOLDERS = 4
-PEER_MAX_SAME_DEPT_SHARE = 0.25
+# Calibration cycle 2 (TRAIN only): all-correct for [0, 0.2) -- oscar is 0/4,
+# the on-call SREs are 1/5 = 0.2 and must not fire. 0.25 sat outside that
+# range; 0.1 is its midpoint. In words: "almost nobody in your department".
+PEER_MAX_SAME_DEPT_SHARE = 0.1
 
 # Bulk read: reads of HIGH+ data in any one hour of the last week, against the
 # identity's own busiest hour before that week. Volume alone flags every ETL
@@ -262,6 +268,8 @@ class UnusedStandingGrant:
     factor_type = RiskFactorType.STALE_ACCESS
 
     def evaluate(self, ctx: RuleContext) -> RuleOutcome:
+        if ctx.identity.is_break_glass:
+            return RuleOutcome.no_finding()  # unused is its designed state
         exercised = _exercised(ctx)
         stale = []
         for perm in ctx.identity.permissions:
@@ -360,7 +368,7 @@ class DormantIdentity:
 
     def evaluate(self, ctx: RuleContext) -> RuleOutcome:
         standing = [p for p in ctx.identity.permissions if p.is_standing]
-        if not standing:
+        if not standing or ctx.identity.is_break_glass:
             return RuleOutcome.no_finding()
 
         threshold = DORMANT_IDENTITY_DAYS

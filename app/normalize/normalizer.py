@@ -311,6 +311,9 @@ class Normalizer:
             # Optional: a source that knows nothing about tenancy yields an
             # internal principal rather than a normalization issue.
             is_external=bool(p.get("is_external", False)),
+            # Optional and quietly False: an untagged emergency account is
+            # judged like any other, which errs toward reporting it.
+            is_break_glass=bool(p.get("is_break_glass", False)),
             permissions=permissions,
         )
 

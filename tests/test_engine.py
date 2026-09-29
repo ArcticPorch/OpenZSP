@@ -234,38 +234,53 @@ def test_detection_meets_calibration_floors():
     assert m.specificity >= MIN_SPECIFICITY, format_report(m)
 
 
-def test_no_negative_control_fires_where_tuning_could_see_it():
+def test_no_negative_control_fires_in_train():
     """
     The controls are the only firings we can be certain would be wrong.
 
-    Asserted on TRAIN and HOLDOUT only. FRESH false alarms are a *measurement*
-    of generalisation, pinned exactly below -- a test demanding zero there
-    would pressure the next person to tune against FRESH until it passed.
+    Asserted on TRAIN only, where tuning happens. Held-out false alarms are a
+    *measurement*, pinned exactly below -- a test demanding zero there would
+    pressure the next person to tune against a held-out split until it passed.
     """
-    for split in (TRAIN, HOLDOUT):
-        m = evaluate(ANCHOR, split=split)
-        assert m.false_alarms() == (), [
-            (o.subject_id, o.factor_type) for o in m.false_alarms()
-        ]
+    m = evaluate(ANCHOR, split=TRAIN)
+    assert m.false_alarms() == (), [(o.subject_id, o.factor_type) for o in m.false_alarms()]
+
+
+def _alarms(split):
+    return {(o.subject_id, o.factor_type) for o in evaluate(ANCHOR, split=split).false_alarms()}
 
 
 def test_fresh_false_alarms_are_exactly_the_recorded_ones():
     """
-    The one FRESH reading of 2026-09-29, pinned so it cannot drift silently.
+    The one FRESH v2 reading (2026-09-29, after calibration cycle 2), pinned.
 
-    Each is a legitimate situation whose legitimacy lives in context the
-    engine cannot see: an emergency account that is meant to sit unused, an
-    annual job with too little history for its rhythm to count, and two
-    auditors who are a minority -- but not an absence -- among the ledger's
-    holders. If this set shrinks, check the change was made against TRAIN.
+    A newly connected integration's initial backfill reads as a bulk read
+    because it has no history (the rule fires on a zero baseline by design),
+    and a Treasury analyst on the AP ledger reads as a context mismatch
+    because departments are flat strings with no notion of adjacent teams.
+    If this set shrinks, check the change was made against TRAIN.
     """
-    m = evaluate(ANCHOR, split=FRESH)
-    assert {(o.subject_id, o.factor_type) for o in m.false_alarms()} == {
-        ("breakglass_root", "STALE_ACCESS"),
-        ("svc_annual_filing", "STALE_ACCESS"),
-        ("ahmed", "CONTEXT_MISMATCH"),
-        ("audit_colleague", "CONTEXT_MISMATCH"),
+    assert _alarms(FRESH) == {
+        ("svc_helpdesk_sync", "ANOMALOUS_BEHAVIOR"),
+        ("treasury_analyst", "CONTEXT_MISMATCH"),
     }
+
+
+def test_holdout_false_alarms_are_exactly_the_recorded_ones():
+    """
+    HOLDOUT now includes the retired FRESH v1. Its break-glass account carries
+    no tag in its evidence, so the engine cannot know it is one -- the fix was
+    the tag, and the tag has to come from the source of record.
+    """
+    assert _alarms(HOLDOUT) == {("breakglass_root", "STALE_ACCESS")}
+
+
+def test_break_glass_tag_excuses_dormancy_never_privilege():
+    r = results()["breakglass_payments"]
+    kinds = {f.factor_type for f in r.assessment.triggered_factors}
+    assert RiskFactorType.EXCESSIVE_PRIVILEGE in kinds
+    assert RiskFactorType.STALE_ACCESS not in kinds
+    assert estate().identity("breakglass_payments").is_break_glass is True
 
 
 def test_unlabelled_firings_are_reported_not_hidden():

@@ -123,9 +123,17 @@ def test_held_out_split_spans_several_factor_types(split):
     assert len(kinds) >= 4, kinds
 
 
-def test_held_out_share_is_reasonable():
-    share = (len(labels(HOLDOUT)) + len(labels(FRESH))) / len(labels())
-    assert 0.2 <= share <= 0.45, share
+def test_split_shares_are_reasonable():
+    """
+    TRAIN keeps a majority, and FRESH is big enough to be worth reading.
+
+    Not a cap on HOLDOUT: every calibration cycle retires its spent FRESH set
+    into HOLDOUT, so HOLDOUT is expected to grow. What must not happen is
+    tuning losing its majority of the labels, or FRESH shrinking to a token.
+    """
+    total = len(labels())
+    assert len(labels(TRAIN)) / total >= 0.5, len(labels(TRAIN)) / total
+    assert len(labels(FRESH)) / total >= 0.1, len(labels(FRESH)) / total
 
 
 # --- Evaluating a subset is sound ------------------------------------------
@@ -212,8 +220,8 @@ def test_holdout_does_not_collapse():
     )
 
 
-def test_no_negative_control_fires_in_the_tuned_splits():
-    """FRESH is excluded on purpose; its false alarms are pinned in test_engine."""
-    for split in (TRAIN, HOLDOUT):
+def test_no_negative_control_fires_in_the_tuned_split():
+    """Held-out splits are excluded on purpose; their false alarms are pinned in test_engine."""
+    for split in (TRAIN,):
         m = evaluate(ANCHOR, split=split)
         assert m.false_alarms() == (), (split, m.false_alarms())

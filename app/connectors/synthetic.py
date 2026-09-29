@@ -1958,7 +1958,162 @@ def _nightly_etl_on_schedule(b: EvidenceBuilder, rng: random.Random) -> list[Evi
 
 
 # --------------------------------------------------------------------------
-# FRESH holdout (written 2026-09-29, after the rules were frozen)
+# Calibration cycle 2 training cases (2026-09-29)
+#
+# The first FRESH reading failed on three *shapes*: an emergency account, a
+# long-cycle job with little history, and a department that is a minority but
+# not absent among a resource's holders. These are new TRAIN cases of the same
+# shapes -- deliberately not copies of the FRESH scenarios, which are spent --
+# plus positives that pin each loosened threshold from the other side, and
+# middle cases for the two thresholds TRAIN left almost unconstrained.
+# --------------------------------------------------------------------------
+
+
+def _emergency_db_break_glass(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """A tagged break-glass account: standing admin on the payments core, never used."""
+    return [
+        b.identity(
+            "breakglass_payments", "break-glass-payments", "human", "Security Operations",
+            is_break_glass=True,
+        ),
+        b.resource("payments_core_db", "Payments Core DB", "database", "critical"),
+        b.grant(
+            "g_breakglass_payments", "breakglass_payments", "payments_core_db", "admin",
+            granted_at=b.ago(days=500),
+        ),
+    ]
+
+
+def _sre_minority_on_billing_db(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Two on-call SREs among six holders of the billing database.
+
+    Billing Engineering owns it; SRE holds it to run it. Each SRE sees one
+    colleague from their own department among five other holders -- a
+    minority, not an absence. "Nobody like you holds this" is false here.
+    """
+    out = [b.resource("billing_db", "Billing DB", "database", "high")]
+    holders = tuple((f"billing_eng_{i}", "Billing Engineering") for i in range(4)) + (
+        ("sre_oncall_0", "Site Reliability"),
+        ("sre_oncall_1", "Site Reliability"),
+    )
+    for who, dept in holders:
+        out.append(b.identity(who, who.replace("_", " ").title(), "human", dept))
+        out.append(b.grant(f"g_{who}_billing", who, "billing_db", "read", granted_at=b.ago(days=400)))
+        for day in range(0, 28, 4):
+            out.append(
+                b.event(
+                    f"e_{who}_billing_{day}", who, "billing_db", "read",
+                    b.ago(days=day, hours=rng.randrange(0, 8)),
+                )
+            )
+    return out
+
+
+def _key_rotation_job_short_history(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """A half-yearly key-rotation job with only three runs on record, 150 days in."""
+    return _scheduled_job(
+        b,
+        "svc_key_rotation",
+        "key-rotation-job",
+        "Security Engineering",
+        ("key_rotation_ledger", "Key Rotation Ledger"),
+        (150, 330, 510),
+    )
+
+
+def _consultant_two_visits(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Two uses 280 days apart, then 220 days of silence.
+
+    Two data points are not a rhythm. If one gap were enough to establish
+    cadence, this identity's "rhythm" would be 280 days and it would never be
+    called dormant -- which is how an offboarded consultant keeps access.
+    """
+    return [
+        b.identity("marta", "Marta Novak", "human", "Strategy"),
+        b.resource("strategy_decks", "Strategy Decks Repo", "repository", "medium"),
+        b.grant("g_marta_decks", "marta", "strategy_decks", "write", granted_at=b.ago(days=600)),
+        b.event("e_marta_0", "marta", "strategy_decks", "write", b.ago(days=500)),
+        b.event("e_marta_1", "marta", "strategy_decks", "write", b.ago(days=220)),
+    ]
+
+
+def _partially_visible_dormant_admin(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    alice's finding, seen through a source that samples 60% of events.
+
+    Confidence lands near 0.57 -- honestly uncertain, but not a blind spot.
+    The case that bounds the reporting floor from above: a floor above ~0.57
+    would suppress a finding we have good-enough evidence for.
+    """
+    partial = EvidenceQuality(
+        source_reliability=0.95,
+        integrity_authenticity=1.0,
+        identity_mapping_confidence=1.0,
+        completeness=0.6,
+    )
+    out = [
+        b.identity("yara", "Yara Haddad", "human", "Platform Engineering"),
+        b.resource("prod_ledger_cluster", "Production Ledger Cluster", "server", "critical"),
+        b.resource("team_wiki", "Team Wiki", "api", "low"),
+        b.grant(
+            "g_yara_admin", "yara", "prod_ledger_cluster", "admin",
+            granted_at=b.ago(days=300), quality=partial,
+        ),
+    ]
+    for day in range(0, 10):
+        out.append(
+            b.event(f"e_yara_{day}", "yara", "team_wiki", "read", b.ago(days=day), quality=partial)
+        )
+    return out
+
+
+def _weekly_report_then_bulk_pull(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    A weekly 20-read report for two months, then 130 reads in an hour.
+
+    Between ravi (no history) and a routine ETL job: this identity *does* read
+    in bulk, just never at this scale. 6.5x its own busiest hour.
+    """
+    out = [
+        b.identity("sofia", "Sofia Rinaldi", "human", "Finance Analytics"),
+        b.resource("revenue_mart", "Revenue Mart", "database", "high"),
+        b.grant("g_sofia_mart", "sofia", "revenue_mart", "read", granted_at=b.ago(days=365)),
+    ]
+    for week in range(8):
+        out += _read_burst(
+            b, "sofia", "revenue_mart", f"weekly{week}", 20, b.ago(days=8 + 7 * week, hours=10), 45
+        )
+    out += _read_burst(b, "sofia", "revenue_mart", "pull", 130, b.ago(days=3, hours=15), 50)
+    return out
+
+
+def _etl_volume_growth(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    A nightly job whose volume grew from 60 to 100 reads a night this week.
+
+    Growth, not exfiltration: 1.7x its own busiest hour. A multiplier low
+    enough to flag this pages on every successful product launch.
+    """
+    out = [
+        b.identity("svc_growth_etl", "growth-etl", "service", "Data Engineering"),
+        b.resource("events_lake", "Events Lake", "database", "high"),
+        b.grant(
+            "g_svc_growth_etl", "svc_growth_etl", "events_lake", "read", granted_at=b.ago(days=400)
+        ),
+    ]
+    for night in range(0, 27):
+        out += _read_burst(
+            b, "svc_growth_etl", "events_lake", f"night{night}", 100 if night < 7 else 60,
+            b.ago(days=night, hours=21), 40,
+        )
+    return out
+
+
+# --------------------------------------------------------------------------
+# Retired FRESH v1 (written 2026-09-29 after the rules were frozen, read once,
+# then moved to HOLDOUT when calibration cycle 2 began)
 #
 # Written from real-world situations, with the label stating what is true of
 # the situation rather than what any rule is expected to do. Not evaluated
@@ -2244,6 +2399,231 @@ def _terraform_runner_org_wide(b: EvidenceBuilder, rng: random.Random) -> list[E
                 b.event(f"e_iac_{res_id}_{day}", "svc_iac_runner", res_id, "write",
                         b.ago(days=day, hours=rng.randrange(0, 20)))
             )
+    return out
+
+
+# --------------------------------------------------------------------------
+# FRESH v2 (written 2026-09-29, after calibration cycle 2 froze the rules)
+#
+# Same discipline as v1: real-world situations, labels state the truth of the
+# situation, nothing scored while writing, read once. New domains throughout,
+# so none of these is a re-skin of a case the rules were tuned on. Same honest
+# limit: written by someone who had read the rules.
+# --------------------------------------------------------------------------
+
+
+def _v2_shared_service_credential(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """A reporting service account whose key three analysts log in with."""
+    out = [
+        b.identity("svc_kpi_export", "kpi-export", "service", "Business Intelligence"),
+        b.resource("kpi_warehouse", "KPI Warehouse", "database", "medium"),
+        b.grant("g_svc_kpi", "svc_kpi_export", "kpi_warehouse", "read", granted_at=b.ago(days=300)),
+    ]
+    for i in range(6):
+        out.append(b.event(f"e_svc_kpi_login_{i}", "svc_kpi_export", "kpi_warehouse", "login",
+                           b.ago(days=i * 4, hours=-10)))
+    return out
+
+
+def _v2_idle_admin_on_crm(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """A sales-ops lead, busy in the CRM daily, who has never used her admin grant on it."""
+    out = [
+        b.identity("rita", "Rita Solberg", "human", "Sales Operations"),
+        b.resource("crm_core", "CRM Core", "api", "high"),
+        b.grant("g_rita_admin", "rita", "crm_core", "admin", granted_at=b.ago(days=380)),
+    ]
+    for day in range(0, 20):
+        out.append(b.event(f"e_rita_{day}", "rita", "crm_core", "read", b.ago(days=day, hours=11)))
+    return out
+
+
+def _v2_break_glass_annual_drill(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """A tagged break-glass account last exercised in an annual recovery drill."""
+    return [
+        b.identity("breakglass_dr", "break-glass-dr", "human", "Security Operations",
+                   is_break_glass=True),
+        b.resource("dr_control_plane", "DR Control Plane", "cloud_account", "critical"),
+        b.grant("g_breakglass_dr", "breakglass_dr", "dr_control_plane", "admin",
+                granted_at=b.ago(days=900)),
+        b.event("e_breakglass_dr_drill", "breakglass_dr", "dr_control_plane", "assume_role",
+                b.ago(days=200)),
+    ]
+
+
+def _v2_quarterly_job_running_late(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """A quarterly tax-provision job that is two weeks late this quarter."""
+    return _scheduled_job(
+        b, "svc_tax_provision", "tax-provision-job", "Tax",
+        ("tax_provision_db", "Tax Provision DB"), (105, 196, 287, 378, 469),
+    )
+
+
+def _v2_quarter_end_board_pull(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """An FP&A analyst who pulls ~200 records at every quarter end; this one is 220."""
+    out = [
+        b.identity("nils", "Nils Berg", "human", "FP&A"),
+        b.resource("planning_cube", "Planning Cube", "database", "high"),
+        b.grant("g_nils_cube", "nils", "planning_cube", "read", granted_at=b.ago(days=700)),
+    ]
+    for q, (day, count) in enumerate(((3, 220), (94, 200), (185, 190), (276, 205))):
+        out += _read_burst(b, "nils", "planning_cube", f"q{q}", count, b.ago(days=day, hours=14), 50)
+    for day in range(5, 280, 9):
+        out.append(b.event(f"e_nils_{day}", "nils", "planning_cube", "read", b.ago(days=day, hours=9)))
+    return out
+
+
+def _v2_new_integration_initial_sync(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """A support-desk integration connected three days ago, doing its initial backfill."""
+    out = [
+        b.identity("svc_helpdesk_sync", "helpdesk-sync", "service", "Customer Support"),
+        b.resource("customer_contacts", "Customer Contacts DB", "database", "high"),
+        b.grant("g_svc_helpdesk_sync", "svc_helpdesk_sync", "customer_contacts", "read",
+                granted_at=b.ago(days=3)),
+    ]
+    out += _read_burst(b, "svc_helpdesk_sync", "customer_contacts", "backfill", 60,
+                       b.ago(days=2, hours=4), 50)
+    return out
+
+
+def _v2_engineer_exit_repo_clone(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """An engineer who reads a handful of repo files a day, then 300 in 45 minutes."""
+    out = [
+        b.identity("aaron", "Aaron Fischer", "human", "Payments Engineering"),
+        b.resource("payments_source", "Payments Source Repo", "repository", "high"),
+        b.grant("g_aaron_repo", "aaron", "payments_source", "read", granted_at=b.ago(days=900)),
+    ]
+    for day in range(2, 60):
+        for k in range(5):
+            out.append(b.event(f"e_aaron_{day}_{k}", "aaron", "payments_source", "read",
+                               b.ago(days=day, hours=9 - k)))
+    out += _read_burst(b, "aaron", "payments_source", "clone", 300, b.ago(days=1, hours=20), 45)
+    return out
+
+
+def _holders(
+    b: EvidenceBuilder, rng: random.Random, res_id: str, holders: tuple[tuple[str, str], ...]
+) -> list[Evidence]:
+    """Several humans with standing read on one resource, each using it weekly."""
+    out: list[Evidence] = []
+    for who, dept in holders:
+        out.append(b.identity(who, who.replace("_", " ").title(), "human", dept))
+        out.append(b.grant(f"g_{who}_{res_id}", who, res_id, "read", granted_at=b.ago(days=300)))
+        for day in range(0, 28, 7):
+            out.append(b.event(f"e_{who}_{res_id}_{day}", who, res_id, "read",
+                               b.ago(days=day, hours=rng.randrange(0, 8))))
+    return out
+
+
+def _v2_marketing_intern_on_hr_db(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """A marketing intern with standing read on the HR records DB, alongside five HR staff."""
+    out = [b.resource("hr_records", "HR Records DB", "database", "high")]
+    out += _holders(b, rng, "hr_records",
+                    tuple((f"hr_staff_{i}", "People Operations") for i in range(5))
+                    + (("mkt_intern", "Marketing"),))
+    return out
+
+
+def _v2_finance_member_on_ap_db(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """An accounts-payable clerk on the AP database, like most of its holders."""
+    out = [b.resource("ap_ledger", "Accounts Payable Ledger", "database", "high")]
+    out += _holders(b, rng, "ap_ledger",
+                    tuple((f"ap_clerk_{i}", "Finance") for i in range(5))
+                    + (("treasury_analyst", "Treasury"),))
+    return out
+
+
+def _v2_agent_jit_secret_reader(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """An AI agent that requests read on the deployment vault just-in-time."""
+    out = [
+        b.identity("agent_deployer", "deploy-agent", "ai_agent", "Platform Engineering"),
+        b.resource("deploy_vault", "Deployment Vault", "secret_store", "critical"),
+        b.grant("g_agent_deployer_vault", "agent_deployer", "deploy_vault", "read",
+                lifecycle="jit_eligible", granted_at=b.ago(days=120)),
+    ]
+    for day in range(0, 14, 2):
+        out.append(b.event(f"e_agent_deployer_{day}", "agent_deployer", "deploy_vault", "read",
+                           b.ago(days=day, hours=3)))
+    return out
+
+
+def _v2_ml_pipeline_creep(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """An ML training service that gained a data grant every couple of months."""
+    out = [b.identity("svc_ml_train", "ml-train", "service", "Machine Learning")]
+    catalog = (
+        ("feature_store", "Feature Store", "medium", 240),
+        ("clickstream", "Clickstream Lake", "medium", 180),
+        ("support_transcripts", "Support Transcripts", "high", 120),
+        ("payments_history", "Payments History", "critical", 70),
+        ("hr_attrition", "HR Attrition Data", "high", 30),
+    )
+    for res_id, name, sens, days in catalog:
+        out.append(b.resource(res_id, name, "database", sens))
+        out.append(b.grant(f"g_ml_{res_id}", "svc_ml_train", res_id, "read",
+                           granted_at=b.ago(days=days)))
+    for day in range(0, 20, 2):
+        out.append(b.event(f"e_ml_{day}", "svc_ml_train", "feature_store", "read",
+                           b.ago(days=day, hours=2)))
+    return out
+
+
+def _v2_public_bucket_admin_medium(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """Admin on a public bucket of product screenshots and press kits."""
+    out = [
+        b.identity("pia", "Pia Laurent", "human", "Communications"),
+        b.resource("press_assets", "Press Assets Bucket", "cloud_account", "medium", exposure="public"),
+        b.grant("g_pia_press", "pia", "press_assets", "admin", granted_at=b.ago(days=200)),
+    ]
+    for day in range(0, 30, 3):
+        out.append(b.event(f"e_pia_{day}", "pia", "press_assets", "write", b.ago(days=day)))
+    return out
+
+
+def _v2_partner_write_on_claims(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """A logistics partner's principal with standing write on the shipments DB."""
+    out = [
+        b.identity("partner_logistics", "logistics-partner", "service", "External Partners",
+                   is_external=True),
+        b.resource("shipments_db", "Shipments DB", "database", "critical"),
+        b.grant("g_partner_shipments", "partner_logistics", "shipments_db", "write",
+                granted_at=b.ago(days=410)),
+    ]
+    for day in range(0, 12, 2):
+        out.append(b.event(f"e_partner_ship_{day}", "partner_logistics", "shipments_db", "write",
+                           b.ago(days=day)))
+    return out
+
+
+def _v2_login_burst_then_self_grant(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """Fourteen failed logins in ten minutes on an admin console, then a self-grant."""
+    out = [
+        b.identity("owen", "Owen Price", "human", "IT Operations"),
+        b.resource("admin_console", "Admin Console", "api", "high"),
+        b.grant("g_owen_console", "owen", "admin_console", "manage_permission",
+                lifecycle="jit_eligible", granted_at=b.ago(days=250)),
+    ]
+    for i in range(14):
+        out.append(b.event(f"e_owen_fail_{i}", "owen", "admin_console", "login",
+                           b.ago(hours=50, minutes=-(i * 10 // 14)), success=False))
+    out.append(b.event("e_owen_ok", "owen", "admin_console", "login", b.ago(hours=49, minutes=45)))
+    out.append(b.event("e_owen_grant", "owen", "admin_console", "grant_permission",
+                       b.ago(hours=49, minutes=30)))
+    return out
+
+
+def _v2_integration_hub_wide_write(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """An integration hub with standing write to six systems, all genuinely used."""
+    out = [b.identity("svc_integration_hub", "integration-hub", "service", "Integrations")]
+    catalog = (
+        ("erp_orders", "high"), ("warehouse_mgmt", "medium"), ("billing_core", "critical"),
+        ("crm_sync", "medium"), ("tax_engine", "high"), ("notify_api", "low"),
+    )
+    for res_id, sens in catalog:
+        out.append(b.resource(res_id, res_id.replace("_", " ").title(), "api", sens))
+        out.append(b.grant(f"g_hub_{res_id}", "svc_integration_hub", res_id, "write",
+                           granted_at=b.ago(days=330)))
+        for day in range(0, 10, 2):
+            out.append(b.event(f"e_hub_{res_id}_{day}", "svc_integration_hub", res_id, "write",
+                               b.ago(days=day, hours=rng.randrange(0, 20))))
     return out
 
 
@@ -3045,7 +3425,120 @@ SCENARIOS: tuple[Scenario, ...] = (
         ),
         build=_nightly_etl_on_schedule,
     ),
-    # --- FRESH holdout (2026-09-29, written after the rules were frozen) ------
+    # --- Calibration cycle 2 training cases (2026-09-29) ---------------------
+    Scenario(
+        name="emergency_db_break_glass",
+        description="A tagged break-glass account: standing admin, never used.",
+        expected=(
+            ExpectedFinding(
+                "STALE_ACCESS",
+                "breakglass_payments",
+                "Tagged break-glass by the source of record: never used is "
+                "its designed state.",
+                should_fire=False,
+            ),
+            ExpectedFinding(
+                "EXCESSIVE_PRIVILEGE",
+                "breakglass_payments",
+                "The tag excuses the dormancy, never the privilege: standing "
+                "admin on a CRITICAL database, reported so it is vaulted and "
+                "watched.",
+            ),
+        ),
+        build=_emergency_db_break_glass,
+    ),
+    Scenario(
+        name="sre_minority_on_billing_db",
+        description="Two on-call SREs among six holders of the billing DB.",
+        expected=(
+            ExpectedFinding(
+                "CONTEXT_MISMATCH",
+                "sre_oncall_0",
+                "One of the five other holders shares her department. A "
+                "minority, not an absence.",
+                should_fire=False,
+            ),
+            ExpectedFinding(
+                "CONTEXT_MISMATCH",
+                "sre_oncall_1",
+                "Same situation as sre_oncall_0.",
+                should_fire=False,
+            ),
+        ),
+        build=_sre_minority_on_billing_db,
+    ),
+    Scenario(
+        name="key_rotation_job_short_history",
+        description="A half-yearly job with three runs on record, 150 days in.",
+        expected=(
+            ExpectedFinding(
+                "STALE_ACCESS",
+                "svc_key_rotation",
+                "Two gaps of 180 days are a schedule; 150 days idle is on it.",
+                should_fire=False,
+            ),
+        ),
+        build=_key_rotation_job_short_history,
+    ),
+    Scenario(
+        name="consultant_two_visits",
+        description="Two uses 280 days apart, then 220 days of silence.",
+        expected=(
+            ExpectedFinding(
+                "STALE_ACCESS",
+                "marta",
+                "Two data points are not a rhythm; 220 days of silence with "
+                "standing write is an offboarding gap.",
+            ),
+        ),
+        build=_consultant_two_visits,
+    ),
+    Scenario(
+        name="partially_visible_dormant_admin",
+        description="alice's finding through a source that sees 60% of events.",
+        expected=(
+            ExpectedFinding(
+                "STALE_ACCESS",
+                "yara",
+                "Unused standing admin on a CRITICAL cluster; evidence is "
+                "partial (confidence ~0.57) but good enough to report.",
+            ),
+            ExpectedFinding(
+                "EXCESSIVE_PRIVILEGE",
+                "yara",
+                "Standing admin on a CRITICAL resource.",
+            ),
+        ),
+        build=_partially_visible_dormant_admin,
+    ),
+    Scenario(
+        name="weekly_report_then_bulk_pull",
+        description="A weekly 20-read report, then 130 reads in an hour.",
+        expected=(
+            ExpectedFinding(
+                "ANOMALOUS_BEHAVIOR",
+                "sofia",
+                "6.5x her own busiest hour on a HIGH revenue mart.",
+            ),
+        ),
+        build=_weekly_report_then_bulk_pull,
+    ),
+    Scenario(
+        name="etl_volume_growth",
+        description="Negative control: nightly volume grew from 60 to 100 reads.",
+        expected=(
+            ExpectedFinding(
+                "ANOMALOUS_BEHAVIOR",
+                "svc_growth_etl",
+                "1.7x its own busiest hour: growth, not exfiltration.",
+                should_fire=False,
+            ),
+        ),
+        build=_etl_volume_growth,
+    ),
+    # --- Retired FRESH v1 (read once 2026-09-29) -> HOLDOUT -------------------
+    # Spent: its answers are known, and calibration cycle 2's TRAIN traps were
+    # shaped by its failures. Kept as contaminated holdout, never re-quoted.
     Scenario(
         name="break_glass_admin_vaulted",
         description="Emergency org-root account: standing admin, never used by design.",
@@ -3065,7 +3558,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_break_glass_admin_vaulted,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="contractor_residual_write",
@@ -3079,7 +3572,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_contractor_residual_write,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="ci_pipeline_reads_prod_secrets",
@@ -3099,7 +3592,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_ci_pipeline_reads_prod_secrets,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="helpdesk_jit_identity_admin",
@@ -3113,7 +3606,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_helpdesk_jit_identity_admin,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="analyst_access_creep",
@@ -3130,7 +3623,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_analyst_access_creep,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="resignation_bulk_download",
@@ -3142,7 +3635,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ExpectedFinding("STALE_ACCESS", "leo", "Read daily.", should_fire=False),
         ),
         build=_resignation_bulk_download,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="annual_compliance_export",
@@ -3156,7 +3649,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_annual_compliance_export,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="hr_member_on_deploy_pipeline",
@@ -3170,7 +3663,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_hr_member_on_deploy_pipeline,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="internal_auditor_on_finance_ledger",
@@ -3194,7 +3687,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_internal_auditor_on_finance_ledger,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="public_admin_api_service",
@@ -3212,7 +3705,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_public_admin_api_service,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="external_auditor_public_docs",
@@ -3227,7 +3720,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_external_auditor_public_docs,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="password_spray_then_role_assumption",
@@ -3243,7 +3736,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_password_spray_then_role_assumption,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="month_end_close_reads",
@@ -3257,7 +3750,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_month_end_close_reads,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name="terraform_runner_org_wide",
@@ -3278,6 +3771,251 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_terraform_runner_org_wide,
+        split=HOLDOUT,
+    ),
+    # --- FRESH v2 (2026-09-29, after calibration cycle 2 froze the rules) -----
+    Scenario(
+        name='v2_shared_service_credential',
+        description='A service account whose key analysts log in with.',
+        expected=(
+            ExpectedFinding(
+                'CONTEXT_MISMATCH',
+                'svc_kpi_export',
+                'Six interactive logins on a key-based service identity: people are sharing its credential.',
+            ),
+        ),
+        build=_v2_shared_service_credential,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_idle_admin_on_crm',
+        description='Busy in the CRM daily; admin on it never used.',
+        expected=(
+            ExpectedFinding(
+                'STALE_ACCESS',
+                'rita',
+                'Admin on the CRM has never been exercised in 380 days; her reads do not use it.',
+            ),
+            ExpectedFinding(
+                'EXCESSIVE_PRIVILEGE',
+                'rita',
+                'Standing admin on a HIGH system.',
+            ),
+        ),
+        build=_v2_idle_admin_on_crm,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_break_glass_annual_drill',
+        description='Tagged break-glass account, last used in an annual drill.',
+        expected=(
+            ExpectedFinding(
+                'STALE_ACCESS',
+                'breakglass_dr',
+                'Tagged emergency account; 200 days since the drill is its designed state.',
+                should_fire=False,
+            ),
+            ExpectedFinding(
+                'EXCESSIVE_PRIVILEGE',
+                'breakglass_dr',
+                'Standing admin on the DR control plane is still standing admin.',
+            ),
+        ),
+        build=_v2_break_glass_annual_drill,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_quarterly_job_running_late',
+        description='A quarterly job two weeks late this quarter.',
+        expected=(
+            ExpectedFinding(
+                'STALE_ACCESS',
+                'svc_tax_provision',
+                'Five runs 91 days apart; 105 days is late, not dormant.',
+                should_fire=False,
+            ),
+        ),
+        build=_v2_quarterly_job_running_late,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_quarter_end_board_pull',
+        description='Quarter-end pull of ~200 records, as every quarter.',
+        expected=(
+            ExpectedFinding(
+                'ANOMALOUS_BEHAVIOR',
+                'nils',
+                '220 records at quarter end against 190-205 at the last three.',
+                should_fire=False,
+            ),
+        ),
+        build=_v2_quarter_end_board_pull,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_new_integration_initial_sync',
+        description='A three-day-old integration doing its initial backfill.',
+        expected=(
+            ExpectedFinding(
+                'ANOMALOUS_BEHAVIOR',
+                'svc_helpdesk_sync',
+                'An initial backfill is what a newly connected integration does.',
+                should_fire=False,
+            ),
+        ),
+        build=_v2_new_integration_initial_sync,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_engineer_exit_repo_clone',
+        description='A few repo reads a day, then 300 in 45 minutes.',
+        expected=(
+            ExpectedFinding(
+                'ANOMALOUS_BEHAVIOR',
+                'aaron',
+                '300 reads of the payments source in 45 minutes against ~5 a day.',
+            ),
+        ),
+        build=_v2_engineer_exit_repo_clone,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_marketing_intern_on_hr_db',
+        description='A marketing intern among HR staff on the HR records DB.',
+        expected=(
+            ExpectedFinding(
+                'CONTEXT_MISMATCH',
+                'mkt_intern',
+                'Every other holder of HR records is People Operations.',
+            ),
+        ),
+        build=_v2_marketing_intern_on_hr_db,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_finance_member_on_ap_db',
+        description='An AP clerk on the AP ledger, like most of its holders.',
+        expected=(
+            ExpectedFinding(
+                'CONTEXT_MISMATCH',
+                'ap_clerk_0',
+                'Four of five other holders are Finance.',
+                should_fire=False,
+            ),
+            # Triaged from an unlabelled firing after the one FRESH v2 reading.
+            # Treasury and AP sit in the same finance organisation; reading the
+            # AP ledger for cash forecasting is the job. A judgement call,
+            # recorded as one: it lowered fresh specificity.
+            ExpectedFinding(
+                'CONTEXT_MISMATCH',
+                'treasury_analyst',
+                'Treasury reading the AP ledger is adjacent-team work, not a mismatch.',
+                should_fire=False,
+            ),
+        ),
+        build=_v2_finance_member_on_ap_db,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_agent_jit_secret_reader',
+        description='An AI agent reading the deployment vault just-in-time.',
+        expected=(
+            ExpectedFinding(
+                'EXCESSIVE_PRIVILEGE',
+                'agent_deployer',
+                'JIT-eligible secret access is the remediated state.',
+                should_fire=False,
+            ),
+        ),
+        build=_v2_agent_jit_secret_reader,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_ml_pipeline_creep',
+        description='An ML service gaining a data grant every couple of months.',
+        expected=(
+            ExpectedFinding(
+                'EXCESSIVE_PRIVILEGE',
+                'svc_ml_train',
+                'Five grants accumulated over eight months, reaching payments and HR data it never reads.',
+            ),
+            ExpectedFinding(
+                'STALE_ACCESS',
+                'svc_ml_train',
+                'Four of five grants never exercised.',
+            ),
+            # Triaged from an unlabelled firing after the one FRESH v2 reading.
+            ExpectedFinding(
+                'EXCESSIVE_BLAST_RADIUS',
+                'svc_ml_train',
+                'One credential reaches payments history, HR and support data.',
+            ),
+        ),
+        build=_v2_ml_pipeline_creep,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_public_bucket_admin_medium',
+        description='Admin on a public bucket of press assets.',
+        expected=(
+            ExpectedFinding(
+                'EXTERNAL_EXPOSURE',
+                'pia',
+                'Public by design and MEDIUM value; nothing sensitive is reachable.',
+                should_fire=False,
+            ),
+        ),
+        build=_v2_public_bucket_admin_medium,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_partner_write_on_claims',
+        description='A partner principal with standing write on a CRITICAL DB.',
+        expected=(
+            ExpectedFinding(
+                'EXTERNAL_EXPOSURE',
+                'partner_logistics',
+                'An identity outside our IdP holds standing write on a CRITICAL database.',
+            ),
+        ),
+        build=_v2_partner_write_on_claims,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_login_burst_then_self_grant',
+        description='Fourteen failed logins, then a successful self-grant.',
+        expected=(
+            ExpectedFinding(
+                'ANOMALOUS_BEHAVIOR',
+                'owen',
+                'Fourteen failed logins inside ten minutes.',
+            ),
+            ExpectedFinding(
+                'PRIVILEGE_ESCALATION',
+                'owen',
+                'A permission grant fifteen minutes after the burst ended.',
+            ),
+        ),
+        build=_v2_login_burst_then_self_grant,
+        split=FRESH,
+    ),
+    Scenario(
+        name='v2_integration_hub_wide_write',
+        description='An integration hub writing to six systems, all used.',
+        expected=(
+            ExpectedFinding(
+                'EXCESSIVE_BLAST_RADIUS',
+                'svc_integration_hub',
+                'One credential writes to six systems including CRITICAL billing.',
+            ),
+            ExpectedFinding(
+                'STALE_ACCESS',
+                'svc_integration_hub',
+                'Every grant is exercised.',
+                should_fire=False,
+            ),
+        ),
+        build=_v2_integration_hub_wide_write,
         split=FRESH,
     ),
 )

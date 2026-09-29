@@ -15,3 +15,7 @@ venv/
 Thumbs.db
 .vscode/
 .idea/
+
+# Personal learning notes are kept outside the repo (path in CLAUDE.local.md)
+CLAUDE.local.md
+docs/LEARNING_GUIDE.md
