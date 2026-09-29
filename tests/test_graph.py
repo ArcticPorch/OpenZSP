@@ -36,6 +36,29 @@ def test_role_chain_becomes_three_edges():
     }
 
 
+def test_control_plane_governs_edges():
+    estate = normalize(
+        [
+            resource_ev("console", payload={"governs": ["ledger", "db"]}),
+            resource_ev("ledger"),
+            resource_ev("db"),
+        ]
+    )
+    graph = IdentityGraph.from_estate(estate)
+    assert shape(graph) == [
+        ("console", "governs", "db", "governs:console>db"),
+        ("console", "governs", "ledger", "governs:console>ledger"),
+    ]
+    assert graph.governed_by(R("console")) == (R("db"), R("ledger"))
+    assert graph.governed_by(R("db")) == ()
+
+
+def test_principal_of_a_role_resource():
+    graph = IdentityGraph.from_estate(role_estate())
+    assert graph.principal_of(R("finance_admin_role")) == I("role_finance_admin")
+    assert graph.principal_of(R("ledger")) is None
+
+
 def test_edges_carry_the_permission_itself():
     estate = role_estate()
     [edge] = IdentityGraph.from_estate(estate).out_edges(I("irene"))
@@ -145,6 +168,14 @@ def test_becomes_edge_runs_resource_to_identity_without_a_permission():
         Edge(EdgeKind.BECOMES, I("a"), R("r"))
 
 
+def test_governs_edge_runs_resource_to_resource_without_a_permission():
+    assert Edge(EdgeKind.GOVERNS, R("console"), R("db")).edge_id == "governs:console>db"
+    with pytest.raises(ValueError):
+        Edge(EdgeKind.GOVERNS, R("console"), I("a"))
+    with pytest.raises(ValueError):
+        Edge(EdgeKind.GOVERNS, R("console"), R("db"), perm())
+
+
 def test_node_ref_rejects_bad_input():
     with pytest.raises(TypeError):
         NodeRef("identity", "a")
@@ -165,6 +196,8 @@ def test_every_corpus_grant_is_exactly_one_edge():
 
     becomes = [e for e in graph.edges if e.kind is EdgeKind.BECOMES]
     assert len(becomes) == sum(1 for r in estate.resources if r.is_assumable)
+    governs = [e for e in graph.edges if e.kind is EdgeKind.GOVERNS]
+    assert len(governs) == sum(len(r.governs) for r in estate.resources)
 
     # Edge ids are unique, so a path can cite them and a choke point can name one.
     assert len({e.edge_id for e in graph.edges}) == len(graph.edges)

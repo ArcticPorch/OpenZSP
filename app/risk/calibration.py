@@ -25,6 +25,20 @@ from app.risk.evaluation import evaluate
 # read these at call time, so patching the module attribute is enough.
 TUNABLE_MODULES = (detections, scoring)
 
+# Labelled positives no threshold can reach, because no rule reads the fact
+# they turn on. Each names what closes it. A sweep point is judged on
+# everything else: counting these would leave no value "all correct" and hide
+# every plateau, while dropping the label would hide the gap. Keep this list
+# short and remove an entry the moment a rule closes it.
+STRUCTURAL_MISSES: frozenset[str] = frozenset(
+    {
+        # The grant sits on a MEDIUM tool; the CRITICAL ledger is one `governs`
+        # hop away, and no rule reads `governs` yet. Closed by a rule on
+        # effective reach (TODO: standing_permission_management.v2).
+        "gustav/EXCESSIVE_PRIVILEGE",
+    }
+)
+
 
 @dataclass(frozen=True)
 class SweepPoint:
@@ -37,8 +51,17 @@ class SweepPoint:
     unlabelled: int
 
     @property
+    def tunable_misses(self) -> tuple[str, ...]:
+        return tuple(m for m in self.false_negatives if m not in STRUCTURAL_MISSES)
+
+    @property
+    def errors(self) -> int:
+        """What a threshold could fix: false alarms plus non-structural misses."""
+        return len(self.false_positives) + len(self.tunable_misses)
+
+    @property
     def perfect(self) -> bool:
-        return not self.false_positives and not self.false_negatives
+        return self.errors == 0
 
 
 def _owner(name: str):
@@ -115,7 +138,7 @@ def format_sweep(name: str, points: Sequence[SweepPoint], current: Any) -> str:
     ]
     for p in points:
         what = ", ".join(
-            [f"FP {x}" for x in p.false_positives] + [f"miss {x}" for x in p.false_negatives]
+            [f"FP {x}" for x in p.false_positives] + [f"miss {x}" for x in p.tunable_misses]
         )
         if p.unlabelled:
             what += f"{', ' if what else ''}{p.unlabelled} unlabelled"
@@ -126,6 +149,10 @@ def format_sweep(name: str, points: Sequence[SweepPoint], current: Any) -> str:
         )
     span = plateau(points)
     lines.append("")
+    if STRUCTURAL_MISSES:
+        lines.append(
+            f"  not shown, no threshold moves them: {', '.join(sorted(STRUCTURAL_MISSES))}"
+        )
     lines.append(
         f"  every TRAIN label correct for {span[0]} .. {span[1]}"
         if span

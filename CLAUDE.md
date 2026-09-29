@@ -38,6 +38,9 @@ app/normalize/         Evidence → domain objects      Normalizer → Estate (+
       ↓
 app/models/            domain facts        Identity, Permission, Resource, Event (+ their enums)
       ↓
+app/graph/graph.py     IdentityGraph: grant / becomes / governs edges   (structure only, timeless)
+app/graph/semantics.py what a grant edge means: holds · assumes · manages-permission
+      ↓
 app/risk/features.py   FeatureExtractor → IdentityFeatures   (measurements only)
 app/risk/coverage.py   CoverageAnalyzer → CoverageSummary    (how much we saw)
       ↓
@@ -86,9 +89,9 @@ The pipeline is connected end to end — `test_pipeline_reaches_feature_extracti
 
 `SyntheticConnector` is a real connector, not a stub, and is the peer of any future AWS reader. Its data is **scenario-driven**: each `Scenario` carries `ExpectedFinding` ground truth, so the generator doubles as a labelled test set for measuring detection. `should_fire=False` marks a negative control (e.g. `active_admin_justified`) — "did not fire" is a tested outcome.
 
-The corpus is **82 scenarios / 132 labels, 81 positive and 51 negative**, sized so a single miss moves recall by ~4 points rather than ~12. `tests/test_corpus.py` enforces that: minimum positive count, a negative-control share between 20% and 50%, and both polarities per factor type. Negative controls are not optional decoration — a rule that fires unconditionally scores perfect recall on an all-positive set, so they are the only thing that makes precision computable.
+The corpus is **84 scenarios / 134 labels, 82 positive and 52 negative**, sized so a single miss moves recall by ~4 points rather than ~12. `tests/test_corpus.py` enforces that: minimum positive count, a negative-control share between 20% and 50%, and both polarities per factor type. Negative controls are not optional decoration — a rule that fires unconditionally scores perfect recall on an all-positive set, so they are the only thing that makes precision computable.
 
-Several scenarios exist as **discriminating pairs**: two identities that are identical in `IdentityFeatures` and differ only in something a naive rule ignores. `burst_then_escalation` vs `failed_logins_spread_thin` (both `failed_authentication_count == 12`, one is 18/hour and one is 0.4/day). `dormant_standing_admin` vs `recently_granted_not_yet_used` (feature-identical; only `granted_at` differs, 420 days vs 2). `service_account_sprawl` vs `read_only_analyst_wide_access` (both 6 standing grants; admin-on-production vs read-on-dashboards). `active_admin_justified` vs `admin_on_medium_internal_tool` (bob vs ines: same standing admin, same usage; CRITICAL vs MEDIUM resource — the TRAIN-side trap on the privilege rule's sensitivity line). `stale_connector_blind_spot` vs `incomplete_but_fresh_collection` (a connector that stopped vs one that only ever saw half). The 2026-09-29 pairs each turn on context outside the feature vector: `agent_ops` vs `agent_intake` (same five grants; a month apart vs one afternoon), `otto` vs `pablo` (standing read on CRITICAL; secret store vs database), `svc_quarterly_recon` vs `svc_semiannual_audit` (silence judged against the identity's own rhythm), `ravi` vs `svc_nightly_etl` (80 reads in 40 minutes; first time vs every night), `oscar` vs `sonia` (who else holds the resource). Keep these pairs feature-identical — if one drifts apart it silently stops testing anything.
+Several scenarios exist as **discriminating pairs**: two identities that are identical in `IdentityFeatures` and differ only in something a naive rule ignores. `burst_then_escalation` vs `failed_logins_spread_thin` (both `failed_authentication_count == 12`, one is 18/hour and one is 0.4/day). `dormant_standing_admin` vs `recently_granted_not_yet_used` (feature-identical; only `granted_at` differs, 420 days vs 2). `service_account_sprawl` vs `read_only_analyst_wide_access` (both 6 standing grants; admin-on-production vs read-on-dashboards). `active_admin_justified` vs `admin_on_medium_internal_tool` (bob vs ines: same standing admin, same usage; CRITICAL vs MEDIUM resource — the TRAIN-side trap on the privilege rule's sensitivity line). `stale_connector_blind_spot` vs `incomplete_but_fresh_collection` (a connector that stopped vs one that only ever saw half). The 2026-09-29 pairs each turn on context outside the feature vector: `agent_ops` vs `agent_intake` (same five grants; a month apart vs one afternoon), `otto` vs `pablo` (standing read on CRITICAL; secret store vs database), `svc_quarterly_recon` vs `svc_semiannual_audit` (silence judged against the identity's own rhythm), `ravi` vs `svc_nightly_etl` (80 reads in 40 minutes; first time vs every night), `oscar` vs `sonia` (who else holds the resource), `gustav` vs `hanna` (permission management on a MEDIUM tool; it governs a CRITICAL ledger vs only LOW resources). Keep these pairs feature-identical — if one drifts apart it silently stops testing anything.
 
 Every `RiskFactorType` now has both a positive label and a negative control; `test_corpus.py` asserts that with no exemptions, so a new factor type cannot be claimed as covered until both exist.
 
@@ -114,7 +117,7 @@ Scoring is **rules carrying their own confidence**, aggregated probabilistically
 
 ### Detection quality, and the three splits
 
-`Scenario.split` is `TRAIN` (40 scenarios, 71 labels), `HOLDOUT` (27 scenarios, 39 labels) or `FRESH` (15 scenarios, 22 labels). Membership is **declared per scenario, never shuffled**: a random split would move every run, so a metric could improve purely because the seed changed and yesterday's number would be unreproducible.
+`Scenario.split` is `TRAIN` (42 scenarios, 73 labels), `HOLDOUT` (27 scenarios, 39 labels) or `FRESH` (15 scenarios, 22 labels). Membership is **declared per scenario, never shuffled**: a random split would move every run, so a metric could improve purely because the seed changed and yesterday's number would be unreproducible.
 
 - **TRAIN** — tune here, freely.
 - **HOLDOUT** — contaminated. The original held-out half (written with the rules visible) plus every *retired* FRESH set. Never quote it. It grows each cycle; that is expected.
@@ -123,11 +126,11 @@ Scoring is **rules carrying their own confidence**, aggregated probabilistically
 ```
                  train   holdout   fresh      gap
   precision     100.0%     95.7%   86.7%   -13.3%
-  recall        100.0%    100.0%  100.0%    +0.0%
+  recall         97.9%    100.0%  100.0%    +2.1%
   specificity   100.0%     94.1%   77.8%   -22.2%
 ```
 
-FRESH v1 (after cycle 1) read 76.5% precision / 60.0% specificity; FRESH v2 (after cycle 2) reads 86.7% / 77.8%, recall 100% both times. Whole corpus: 81 TP · 3 FP · 0 FN · 48 TN, zero unlabelled firings. **Quote FRESH, not TRAIN.**
+FRESH v1 (after cycle 1) read 76.5% precision / 60.0% specificity; FRESH v2 (after cycle 2) reads 86.7% / 77.8%, recall 100% both times. Whole corpus: 81 TP · 3 FP · 1 FN · 49 TN, zero unlabelled firings. **Quote FRESH, not TRAIN.**
 
 **The discipline:** tune against TRAIN, freeze, write and read FRESH once, and never move a threshold because a FRESH number looked bad — the moment you do, FRESH is training data. When a FRESH reading reveals a failure *shape*, the fix is a new TRAIN case of that shape in a different domain (never a copy of the FRESH scenario), then the next cycle. `app/risk/calibration.py` enforces part of this: `sweep()` raises on any split but TRAIN. `test_detection_meets_calibration_floors` is measured on TRAIN only (floors 0.90 precision / 0.85 recall / 1.00 specificity; raise them when detection genuinely improves, never lower one to make a change pass). `test_no_negative_control_fires_in_train` demands zero false alarms on TRAIN only; held-out false alarms are *measurements*, pinned exactly:
 
@@ -137,7 +140,7 @@ FRESH v1 (after cycle 1) read 76.5% precision / 60.0% specificity; FRESH v2 (aft
 
 `tests/test_split.py` guards the rest: the splits partition cleanly, **no subject appears in two splits**, both held-out splits carry both polarities, span ≥4 factor types and have ≥6 positives / ≥3 negatives, TRAIN keeps ≥50% of labels and FRESH ≥10%, and a per-split score agrees pair-for-pair with the whole-corpus score. That last one rests on scenario independence — and, for the peer rule, on `test_no_resource_is_shared_between_scenarios`.
 
-There are **no known misses** (`test_known_misses_are_exactly_the_documented_ones` pins the empty set). oscar was fixed by `peer_access_outlier.v1`, agent_ops by `privilege_creep.v1`. `frank / EXCESSIVE_PRIVILEGE` was removed as a label on review (it double-counted his departure). **Never remove or flip a label because the engine misses it** — decide on what the factor type means, write the reason on the scenario, and report the metric change as a label change. Triage of an unlabelled firing follows the truth whichever way it moves the number.
+The only miss is **structural**: `gustav / EXCESSIVE_PRIVILEGE` turns on `Resource.governs`, which no rule reads yet, so no threshold can move it. `calibration.STRUCTURAL_MISSES` lists such misses (each naming what closes it); sweeps ignore them when finding plateaus, and `test_known_misses_are_exactly_the_documented_ones` pins the actual misses to exactly that list. Remove the entry the moment a rule closes it. oscar was fixed by `peer_access_outlier.v1`, agent_ops by `privilege_creep.v1`. `frank / EXCESSIVE_PRIVILEGE` was removed as a label on review (it double-counted his departure). **Never remove or flip a label because the engine misses it** — decide on what the factor type means, write the reason on the scenario, and report the metric change as a label change. Triage of an unlabelled firing follows the truth whichever way it moves the number.
 
 The privilege rule's sensitivity line is pinned from both sides in TRAIN: bob CRITICAL fires, `hugo` HIGH fires, `ines` MEDIUM must not; `henry` LOW guards it in holdout. HIGH was a labelling decision by the user on 2026-09-29: whoever needs admin on a HIGH resource should request it JIT.
 
@@ -209,6 +212,15 @@ Dangling references are *retained with an issue*, not dropped: a grant pointing 
 `Permission.standing: bool` was replaced by `GrantLifecycle` — `STANDING` / `TIME_BOUND` / `JIT_ELIGIBLE` / `ELEVATED` — because converting standing access to just-in-time access is the entire product thesis, and a bool cannot express the difference between "holds admin" and "may request admin, 4h TTL". `Permission` is frozen and validates its own invariants: `TIME_BOUND`/`ELEVATED` **require** `expires_at` (an expiring grant with no expiry is a standing grant lying about itself, and would inflate the very number this engine reports). Derived facts: `is_standing`, `is_expired_at(t)`, `confers_access_at(t)`.
 
 `Identity`, `Resource`, and `Event` are still unfrozen and unvalidated — only `Permission` was upgraded. `Identity.permissions` is a mutable list.
+
+### Roles, control planes and the graph
+
+Two optional `Resource` links, both **explicit** so a coincidental id match can never invent a path, and both retained with a `NormalizationIssue` when they dangle:
+
+- `principal_id` — impersonating this resource makes you that identity (usually `IdentityType.ROLE`, but a service account works too). A role is an `Identity` holding ordinary grants. **Roles are skipped by the per-identity engine and by `PeerBaseline`**: activity is logged under the assumer, so every role would read as dormant; its risk belongs to whoever can reach it.
+- `governs` — this resource is a control plane: permission management on it reaches every resource listed. Scope is data from the source, never guessed ("everything" would give every IAM admin the same maximal reach).
+
+`IdentityGraph` keeps **every** grant as an edge (JIT and expired included) with the `Permission` on it; whether an edge counts at time t is traversal's call. Nodes are keyed by `(kind, id)`; unknown references become bare nodes. `semantics.py` states meanings **per capability** (`can_assume`, `manages_permission`, `effective_capabilities`) so traversal can apply them to derived capabilities: manage-permission ⇒ effectively every capability on the resource and on what it governs; `impersonate`/`manage_identity`/`manage_permission`/`admin` on an assumable resource ⇒ become its principal.
 
 ### Exposure
 

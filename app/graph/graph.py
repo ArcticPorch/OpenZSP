@@ -24,7 +24,7 @@ Three commitments shape it:
 
 3. **Dangling references become bare nodes, not gaps.** A grant on a resource
    we never saw still leads *somewhere*, and a role link to an unknown principal
-   still exists. Dropping either would understate reach -- the one direction a
+   or a control plane governing an unknown resource still exists. Dropping either would understate reach -- the one direction a
    privilege engine must not err in. Such nodes carry no attributes, which is
    how later layers tell "unknown" from "harmless".
 
@@ -77,11 +77,12 @@ class EdgeKind(Enum):
     """
     Structural edges only. What a grant edge *means* for traversal -- plain
     access, a step into another principal, the power to grant -- is read from
-    its capability, not baked into the kind.
+    its capability in `semantics.py`, not baked into the kind.
     """
 
     GRANT = "grant"      # identity -> resource: holds this permission on it
     BECOMES = "becomes"  # resource -> identity: impersonating it makes you them
+    GOVERNS = "governs"  # resource -> resource: its permission management controls it
 
 
 @dataclass(frozen=True)
@@ -89,7 +90,7 @@ class Edge:
     kind: EdgeKind
     source: NodeRef
     target: NodeRef
-    # Set on GRANT edges, never on BECOMES. The edge carries the permission
+    # Set on GRANT edges, never on the others. The edge carries the permission
     # itself rather than a copy of its fields, so lifecycle and expiry are
     # judged by `Permission`'s own methods and cannot drift.
     permission: Optional[Permission] = None
@@ -105,22 +106,29 @@ class Edge:
             if self.target != NodeRef.resource(self.permission.resource_id):
                 raise ValueError("a grant edge must end at the grant's resource")
         else:
+            name = self.kind.value
+            expected_target = (
+                NodeKind.IDENTITY if self.kind is EdgeKind.BECOMES else NodeKind.RESOURCE
+            )
             if self.permission is not None:
-                raise ValueError("a becomes edge carries no permission")
+                raise ValueError(f"a {name} edge carries no permission")
             if self.source.kind is not NodeKind.RESOURCE:
-                raise ValueError("a becomes edge must start at a resource")
-            if self.target.kind is not NodeKind.IDENTITY:
-                raise ValueError("a becomes edge must end at an identity")
+                raise ValueError(f"a {name} edge must start at a resource")
+            if self.target.kind is not expected_target:
+                raise ValueError(f"a {name} edge must end at a {expected_target.value}")
 
     @property
     def edge_id(self) -> str:
         """
         Stable and derived, never generated, so paths are diffable across runs.
-        A grant edge is its grant; a resource becomes at most one principal.
+        A grant edge is its grant; a resource becomes at most one principal and
+        governs each resource at most once.
         """
         if self.permission is not None:
             return self.permission.id
-        return f"becomes:{self.source.id}"
+        if self.kind is EdgeKind.BECOMES:
+            return f"becomes:{self.source.id}"
+        return f"governs:{self.source.id}>{self.target.id}"
 
     @property
     def sort_key(self) -> tuple:
@@ -168,6 +176,10 @@ class IdentityGraph:
                 principal = NodeRef.identity(resource.principal_id)
                 nodes.add(principal)
                 edges.append(Edge(EdgeKind.BECOMES, node, principal))
+            for governed_id in resource.governs:
+                governed = NodeRef.resource(governed_id)
+                nodes.add(governed)
+                edges.append(Edge(EdgeKind.GOVERNS, node, governed))
 
         for identity in by_identity.values():
             node = NodeRef.identity(identity.id)
@@ -199,6 +211,16 @@ class IdentityGraph:
     def out_edges(self, node: NodeRef) -> tuple[Edge, ...]:
         """Edges leaving a node, in a fixed order so traversal is deterministic."""
         return self._out.get(node, ())
+
+    def principal_of(self, resource: NodeRef) -> Optional[NodeRef]:
+        """The principal that impersonating this resource makes you, if any."""
+        return next(
+            (e.target for e in self.out_edges(resource) if e.kind is EdgeKind.BECOMES), None
+        )
+
+    def governed_by(self, resource: NodeRef) -> tuple[NodeRef, ...]:
+        """Resources whose permissions this control plane manages."""
+        return tuple(e.target for e in self.out_edges(resource) if e.kind is EdgeKind.GOVERNS)
 
     def identity(self, identity_id: str) -> Optional[Identity]:
         """None for a bare node: referenced, but never observed."""

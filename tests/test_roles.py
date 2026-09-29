@@ -92,6 +92,37 @@ def test_a_link_need_not_point_at_a_role():
     assert estate.resource("svc_deployer_sa").principal_id == "svc_deployer"
 
 
+# --- Control planes: `governs` -------------------------------------------
+
+
+def test_governs_is_sorted_and_deduplicated():
+    """Order in the source is not data."""
+    estate = normalize(
+        [
+            resource_ev("console", payload={"governs": ["ledger", "db", "ledger"]}),
+            resource_ev("ledger"),
+            resource_ev("db"),
+        ]
+    )
+    assert estate.issues == ()
+    assert estate.resource("console").governs == ("db", "ledger")
+    assert estate.resource("db").governs == ()
+
+
+def test_governing_an_unknown_resource_is_retained_with_an_issue():
+    estate = normalize([resource_ev("console", payload={"governs": ["ghost_db"]})])
+    assert estate.resource("console").governs == ("ghost_db",)
+    [issue] = estate.issues
+    assert "ghost_db" in issue.reason
+
+
+def test_malformed_governs_becomes_an_issue():
+    for bad in ("ledger", ["ledger", ""], [3]):
+        estate = normalize([resource_ev("console", payload={"governs": bad})])
+        assert estate.resources == ()
+        assert "governs" in estate.issues[0].reason
+
+
 # --- Kept out of the per-identity engine -----------------------------------
 
 

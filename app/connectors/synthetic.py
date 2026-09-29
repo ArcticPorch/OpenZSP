@@ -1509,6 +1509,66 @@ def _jit_permission_manager(b: EvidenceBuilder, rng: random.Random) -> list[Evid
     return out
 
 
+def _entitlements_admin(
+    b: EvidenceBuilder,
+    identity_id: str,
+    name: str,
+    tool: tuple[str, str],
+    governed: tuple[tuple[str, str, str], ...],
+) -> list[Evidence]:
+    """
+    Standing permission management on a MEDIUM internal tool, used every few
+    days. What the tool *governs* is the only thing the pair varies.
+    """
+    tool_id, tool_name = tool
+    out = [
+        b.identity(identity_id, name, "human", "Business Systems"),
+        b.resource(tool_id, tool_name, "api", "medium",
+                   governs=tuple(res_id for res_id, _, _ in governed)),
+        b.grant(f"g_{identity_id}_tool", identity_id, tool_id, "manage_permission",
+                granted_at=b.ago(days=400)),
+    ]
+    out += [b.resource(res_id, res_name, "database", sens) for res_id, res_name, sens in governed]
+    for i, day in enumerate(range(1, 60, 4)):
+        out.append(b.event(f"e_{identity_id}_grant_{i}", identity_id, tool_id,
+                           "grant_permission", b.ago(days=day, hours=3)))
+    return out
+
+
+def _governed_crown_jewel(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Permission management on a mid-tier tool that controls a CRITICAL ledger.
+
+    Every grant-level check reads clean: the grant sits on a MEDIUM resource,
+    so `standing_permission_management.v1` -- which judges the resource the
+    grant is *on* -- stays quiet. But whoever manages the tool's permission
+    table decides who holds the treasury ledger, including themselves. The
+    finding lives one `governs` hop away from the grant.
+    """
+    return _entitlements_admin(
+        b, "gustav", "Gustav Lindqvist",
+        ("treasury_entitlements", "Treasury Entitlements Tool"),
+        (("treasury_payments_ledger", "Treasury Payments Ledger", "critical"),),
+    )
+
+
+def _governed_low_value_only(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: the same grant on the same kind of tool, governing only
+    LOW resources. Pairs with `governed_crown_jewel`; feature-identical, and
+    only the governed sensitivity differs. A rule that fires on "manages a
+    control plane" rather than on what the plane controls fires here.
+    """
+    return _entitlements_admin(
+        b, "hanna", "Hanna Okafor",
+        ("wiki_entitlements", "Wiki Entitlements Tool"),
+        (
+            ("handbook_wiki", "Employee Handbook Wiki", "low"),
+            ("lunch_rota", "Office Lunch Rota", "low"),
+        ),
+    )
+
+
 def _unmapped_capability_grants(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
     """
     A source whose action vocabulary this taxonomy does not understand.
@@ -3206,6 +3266,35 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_jit_permission_manager,
+    ),
+    Scenario(
+        name="governed_crown_jewel",
+        description="Permission management on a MEDIUM tool that governs a CRITICAL ledger.",
+        expected=(
+            ExpectedFinding(
+                "EXCESSIVE_PRIVILEGE",
+                "gustav",
+                "Standing manage_permission over the tool that controls who holds "
+                "the treasury ledger: he can grant himself admin on a crown jewel. "
+                "The grant's own resource is MEDIUM; the privilege is what it governs.",
+            ),
+        ),
+        build=_governed_crown_jewel,
+    ),
+    Scenario(
+        name="governed_low_value_only",
+        description="Negative control: the same grant, on a tool governing only LOW resources.",
+        expected=(
+            ExpectedFinding(
+                "EXCESSIVE_PRIVILEGE",
+                "hanna",
+                "Same grant, same tool tier, same usage as gustav; everything the "
+                "tool governs is LOW. Permission management over a wiki is not "
+                "the same finding.",
+                should_fire=False,
+            ),
+        ),
+        build=_governed_low_value_only,
     ),
     Scenario(
         name="unmapped_capability_grants",

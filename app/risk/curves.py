@@ -74,7 +74,7 @@ def _panel(curve: Curve, points, current, x0: float, y0: float) -> list[str]:
     w = PANEL_W - PAD_L - PAD_R
     h = PANEL_H - PAD_T - PAD_B
     vals = [p.value for p in points]
-    errs = [len(p.false_positives) + len(p.false_negatives) for p in points]
+    errs = [p.errors for p in points]
     top = max(max(errs), 1)
 
     def fx(v: float) -> float:

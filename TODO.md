@@ -24,9 +24,10 @@ connectors → evidence → normalize → models → graph → risk (features ·
 
 - [x] Model roles as principals (role resource ↔ role identity)
 - [x] `app/graph/`: build identity–resource graph from `Estate`
-- [ ] Edge types: holds (capability, lifecycle), assumes/impersonates, manages-permission
+- [x] Edge types: holds (capability, lifecycle), assumes/impersonates, manages-permission (+ `Resource.governs`, gustav/hanna pair)
 - [ ] Reachability: BFS with hop limit, keep paths
 - [ ] Effective reach per identity: (resource, capability) set; standing vs JIT-only
+- [ ] `standing_permission_management.v2` on effective reach — closes structural miss gustav
 - [ ] Blast-radius score from reachability (sensitivity × exposure weighted)
 - [ ] `standing_blast_radius.v2` on reachability, replacing grant count
 - [ ] Attack-path rule: low-privilege / external identity → CRITICAL in ≤ k hops

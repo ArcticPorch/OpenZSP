@@ -57,6 +57,14 @@ class Resource:
     # joining them. Explicit rather than a shared id, because two ids that
     # happen to match must not invent an access path.
     principal_id: Optional[str] = None
+    # Set when this resource is a control plane: holding permission management
+    # on it means being able to grant yourself anything on each resource listed
+    # here. A grant only names the resource it sits on, so without this an IAM
+    # console rated MEDIUM hides the CRITICAL ledger it controls. Explicit for
+    # the same reason as `principal_id`: scope is data from the source, never
+    # guessed -- guessing "everything" gives every IAM admin the same maximal
+    # reach and makes reach useless for ranking.
+    governs: tuple[str, ...] = ()
 
     @property
     def is_assumable(self) -> bool:

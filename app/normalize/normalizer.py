@@ -130,6 +130,16 @@ def _optional_str(payload: dict[str, Any], key: str) -> Optional[str]:
     return raw
 
 
+def _str_tuple(payload: dict[str, Any], key: str) -> tuple[str, ...]:
+    """An optional list of ids, sorted and de-duplicated so order is not data."""
+    raw = payload.get(key, ())
+    if not isinstance(raw, (list, tuple)):
+        raise _RecordError(f"{key} must be a list of ids, got {type(raw).__name__}")
+    if not all(isinstance(v, str) and v.strip() for v in raw):
+        raise _RecordError(f"{key} must contain only non-empty strings, got {raw!r}")
+    return tuple(sorted(set(raw)))
+
+
 def _parse_bool(raw: Any, field_name: str) -> bool:
     if not isinstance(raw, bool):
         raise _RecordError(f"{field_name} must be a boolean, got {type(raw).__name__}")
@@ -258,7 +268,8 @@ class Normalizer:
 
         # A role link pointing at an identity we never saw is kept, like a grant
         # on an unknown resource: dropping it would erase every path through
-        # that role, which understates access.
+        # that role, which understates access. Same for a control plane that
+        # governs a resource we never saw.
         for res in resources.values():
             if res.principal_id is not None and res.principal_id not in identities:
                 issues.append(
@@ -269,6 +280,15 @@ class Normalizer:
                         "link retained",
                     )
                 )
+            for governed in res.governs:
+                if governed not in resources:
+                    issues.append(
+                        NormalizationIssue(
+                            resource_winners[res.id],
+                            RecordKind.RESOURCE,
+                            f"governs unknown resource '{governed}'; link retained",
+                        )
+                    )
 
         # -- Events --
         events: dict[str, Event] = {}
@@ -356,6 +376,7 @@ class Normalizer:
             exposure=_parse_enum(Exposure, p.get("exposure", "internal"), "exposure"),
             # Optional: most resources are not principals.
             principal_id=_optional_str(p, "principal_id"),
+            governs=_str_tuple(p, "governs"),
         )
 
     @staticmethod

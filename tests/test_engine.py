@@ -13,6 +13,7 @@ import pytest
 from app.connectors.synthetic import FRESH, HOLDOUT, SCENARIOS, TRAIN, SyntheticConnector
 from app.normalize.normalizer import Normalizer
 from app.risk import scoring
+from app.risk.calibration import STRUCTURAL_MISSES
 from app.risk.coverage import CoverageAnalyzer
 from app.risk.detections import ALL_RULES
 from app.risk.engine import RiskEngine
@@ -302,13 +303,17 @@ def test_known_misses_are_exactly_the_documented_ones():
     Every labelled positive fires, in every split. If one stops, the change
     was a regression worth catching.
 
-    History, because an empty set hides it: oscar/CONTEXT_MISMATCH was fixed by
-    `peer_access_outlier.v1` and agent_ops/EXCESSIVE_PRIVILEGE by
-    `privilege_creep.v1` (both 2026-09-29, tuned on TRAIN). frank's was removed
-    as a label on review, not fixed -- it double-counted his departure.
+    The only misses allowed are the structural ones calibration names (no rule
+    reads the fact they turn on), so the two lists cannot drift apart.
+
+    History: oscar/CONTEXT_MISMATCH was fixed by `peer_access_outlier.v1` and
+    agent_ops/EXCESSIVE_PRIVILEGE by `privilege_creep.v1` (both 2026-09-29,
+    tuned on TRAIN). frank's was removed as a label on review, not fixed -- it
+    double-counted his departure. gustav/EXCESSIVE_PRIVILEGE (2026-09-29) waits
+    for a rule that reads `governs`.
     """
     m = evaluate(ANCHOR)
-    assert {(o.subject_id, o.factor_type) for o in m.misses()} == set()
+    assert {f"{o.subject_id}/{o.factor_type}" for o in m.misses()} == STRUCTURAL_MISSES
 
 
 def test_metrics_are_deterministic():

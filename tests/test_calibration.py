@@ -115,6 +115,15 @@ def test_plateau_picks_the_widest_run():
     assert calibration.plateau([pt(1, False)]) is None
 
 
+def test_structural_misses_do_not_hide_the_plateau():
+    """No threshold can move them, so they must not make every value imperfect."""
+    [structural] = sorted(calibration.STRUCTURAL_MISSES)[:1]
+    only_structural = calibration.SweepPoint(1, 1, 1, 1, (), (structural,), 0)
+    assert only_structural.perfect and only_structural.errors == 0
+    tunable = calibration.SweepPoint(1, 1, 1, 1, (), (structural, "x/STALE_ACCESS"), 0)
+    assert not tunable.perfect and tunable.errors == 1
+
+
 def test_calibrated_value_sits_inside_the_train_plateau():
     """
     Cycle 1 set 1.25 as the midpoint of (120/182, 160/91). Cycle 2's key-rotation
