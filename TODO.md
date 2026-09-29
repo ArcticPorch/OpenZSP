@@ -46,7 +46,7 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [ ] Secret-path scoping for secret access
 - [ ] Sequence detections across rules
 - [ ] Blind FRESH set written by someone who hasn't read the rules
-- [ ] Tuning-curve charts for README
+- [x] Tuning-curve charts for README
 
 ## Later — real deployment
 

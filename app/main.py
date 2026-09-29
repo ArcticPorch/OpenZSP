@@ -8,6 +8,7 @@ CLI entry point: run the pipeline over the labelled corpus and report quality.
     ./venv/Scripts/python.exe -m app.main --fresh     # fresh detail -- read once per cycle
     ./venv/Scripts/python.exe -m app.main --findings  # per-identity assessments
     ./venv/Scripts/python.exe -m app.main --sweep NAME=v1,v2,...   # TRAIN only
+    ./venv/Scripts/python.exe -m app.main --curves docs/tuning_curves.svg  # README chart
 """
 
 import sys
@@ -63,8 +64,23 @@ def run_sweep(spec: str) -> None:
     print(calibration.format_sweep(name, calibration.sweep(name, values, ANCHOR), current))
 
 
+def write_curves(path: str) -> None:
+    """Render the TRAIN-only tuning curves to an SVG file (used by the README)."""
+    from pathlib import Path
+
+    from app.risk.curves import render_svg
+
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render_svg(ANCHOR), encoding="utf-8")
+    print(f"wrote {out}")
+
+
 def main() -> int:
-    if "--sweep" in sys.argv:
+    if "--curves" in sys.argv:
+        idx = sys.argv.index("--curves")
+        write_curves(sys.argv[idx + 1] if idx + 1 < len(sys.argv) else "docs/tuning_curves.svg")
+    elif "--sweep" in sys.argv:
         idx = sys.argv.index("--sweep")
         if idx + 1 >= len(sys.argv):
             raise SystemExit("usage: --sweep NAME=v1,v2,...")

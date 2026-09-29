@@ -116,9 +116,23 @@ def test_plateau_picks_the_widest_run():
 
 
 def test_calibrated_value_sits_inside_the_train_plateau():
-    """The 2026-09-29 calibration: 1.25 is the midpoint of (0.66, 1.76)."""
+    """
+    Cycle 1 set 1.25 as the midpoint of (120/182, 160/91). Cycle 2's key-rotation
+    trap (150 days idle on a 180-day rhythm) raised the lower edge to 150/180;
+    1.25 is still comfortably inside, so it was kept.
+    """
     assert detections.CADENCE_TOLERANCE == 1.25
-    assert 120 / 182 < detections.CADENCE_TOLERANCE < 160 / 91
+    assert 150 / 180 < detections.CADENCE_TOLERANCE < 160 / 91
+
+
+def test_tuning_curves_render_a_self_contained_svg():
+    from app.risk.curves import Curve, render_svg
+
+    svg = render_svg(ANCHOR, curves=(Curve("MIN_CADENCE_GAPS", (1, 2, 3), previous=3),))
+    assert svg.startswith("<svg") and svg.rstrip().endswith("</svg>")
+    assert "prefers-color-scheme: dark" in svg  # dark mode is selected, not flipped
+    assert "MIN_CADENCE_GAPS" in svg and "all correct: only at 2" in svg
+    assert "http" not in svg.replace("http://www.w3.org/2000/svg", "")  # no external assets
 
 
 def test_cycle_two_values_are_the_only_or_middle_all_correct_ones():

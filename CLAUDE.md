@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 1. **Read `TODO.md`.** It is the working plan. Work proceeds item by item in its order; tick each item (`- [x]`) in the same commit that completes it, and add new items there rather than anywhere else.
 2. **Current phase: graph connectivity & blast radius** (TODO "Next"). Detection & calibration is finished; its parked items stay parked unless the user asks. **JIT access is out of scope** for this project.
-3. **Do not read or edit the learning guide.** It was frozen on 2026-09-29 as a personal record, lives outside the repo, and must never be updated, recreated or committed. Do not use it for to-dos.
+3. **Two personal guides live outside the repo** (paths in the gitignored `CLAUDE.local.md`); neither is ever committed, linked or copied into the repo:
+   - the original **learning guide** — frozen 2026-09-29. Never read it for tasks, never edit it.
+   - the **graph learning guide** — the user's notes for this phase. **Update it whenever a graph item in `TODO.md` is completed**: fill that item's section with a few simple lines (what was built → why this way → the one thing to remember) and add a one-line entry to its decisions log for any design choice. Plain language, no code dumps; it is for understanding the architecture, not a spec. `TODO.md` stays the to-do list.
 4. Keep `README.md` headline numbers/counts in step with `python -m app.main` whenever they change; it must not link to any learning guide.
 5. Commit/push only when the user asks. Commit messages end with the co-author line used in `git log`.
 
@@ -149,13 +151,13 @@ The privilege rule's sensitivity line is pinned from both sides in TRAIN: bob CR
 
 | Threshold | All-correct on TRAIN | Value |
 |---|---|---|
-| `CADENCE_TOLERANCE` | 0.66 – 1.76 | 1.25 (cycle 1, from 1.5) |
+| `CADENCE_TOLERANCE` | 0.83 – 1.76 | 1.25 (cycle 1, from 1.5; cycle 2's key-rotation trap raised the lower edge from 0.66) |
 | `MIN_CADENCE_GAPS` | exactly 2 | 2 (cycle 2, from 3) |
 | `PEER_MAX_SAME_DEPT_SHARE` | 0 – <0.2 | 0.1 (cycle 2, from 0.25) |
 | `MIN_REPORTING_CONFIDENCE` | >0.095 – 0.57 | 0.35 (kept) |
 | `BULK_READ_BASELINE_MULTIPLIER` | >1.67 – 6.5 | 3 (kept) |
 
-Each is bounded on both sides by a TRAIN label (carol/yara, growth ETL/sofia, SREs/oscar, key rotation/marta, semiannual/quarterly job). A threshold whose plateau is bounded on only one side is a guess — add the missing TRAIN case before tuning it. `tests/test_calibration.py` pins these plateaus, so an edit has to re-run the sweep.
+Each is bounded on both sides by a TRAIN label (carol/yara, growth ETL/sofia, SREs/oscar, key rotation/marta, semiannual/quarterly job). A threshold whose plateau is bounded on only one side is a guess — add the missing TRAIN case before tuning it. `tests/test_calibration.py` pins these plateaus, so an edit has to re-run the sweep. After any calibration change, regenerate the README chart: `./venv/Scripts/python.exe -m app.main --curves docs/tuning_curves.svg` (`app/risk/curves.py`, dependency-free SVG, ~20 s).
 
 ### Baselines
 

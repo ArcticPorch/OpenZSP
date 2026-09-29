@@ -61,6 +61,26 @@ fire, but the engine refuses to report them as if they were trustworthy. It reco
 **coverage gap**. Without that separation, carol would be reported either as a confident risk or as
 clean — and a system that says "all clear" at the moment it goes blind is the most dangerous kind.
 
+## Tuning curves
+
+Every threshold was calibrated against the training split only. Each panel sweeps one threshold
+and counts the training labels the engine gets wrong at each value. The shaded band is the range
+where every label is right. The value in use sits inside that band, away from its edges, so one
+new scenario can't tip it over.
+
+![Tuning curves: training-label errors as each calibrated threshold varies](docs/tuning_curves.svg)
+
+| Threshold | All training labels right | In use | Bounded below by | Bounded above by |
+|---|---|---|---|---|
+| `CADENCE_TOLERANCE` | 0.85 – 1.75 | 1.25 | half-yearly job with short history | quarterly job that stopped |
+| `MIN_CADENCE_GAPS` | only 2 | 2 | two visits 280 days apart | half-yearly job, three runs |
+| `PEER_MAX_SAME_DEPT_SHARE` | 0 – 0.175 | 0.1 | marketing admin on payments | on-call SREs on billing |
+| `MIN_REPORTING_CONFIDENCE` | 0.1 – 0.55 | 0.35 | dead connector | partially visible source |
+| `BULK_READ_BASELINE_MULTIPLIER` | 1.7 – 6.5 | 3 | nightly ETL growth | weekly report → bulk pull |
+
+Regenerate with `python -m app.main --curves docs/tuning_curves.svg` (sampled values; exact edges
+lie between samples).
+
 ## How it works
 
 ```
