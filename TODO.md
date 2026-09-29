@@ -23,7 +23,7 @@ connectors → evidence → normalize → models → graph → risk (features ·
 ## Next — graph connectivity & blast radius
 
 - [x] Model roles as principals (role resource ↔ role identity)
-- [ ] `app/graph/`: build identity–resource graph from `Estate`
+- [x] `app/graph/`: build identity–resource graph from `Estate`
 - [ ] Edge types: holds (capability, lifecycle), assumes/impersonates, manages-permission
 - [ ] Reachability: BFS with hop limit, keep paths
 - [ ] Effective reach per identity: (resource, capability) set; standing vs JIT-only
