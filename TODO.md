@@ -27,7 +27,7 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [x] Edge types: holds (capability, lifecycle), assumes/impersonates, manages-permission (+ `Resource.governs`, gustav/hanna pair)
 - [x] Reachability: BFS with hop limit, keep paths
 - [x] Effective reach per identity: (resource, capability) set; standing / temporary / expired-attached / JIT-only
-- [ ] `standing_permission_management.v2` on effective reach — closes structural miss gustav
+- [x] `standing_permission_management.v2` on effective reach — closes structural miss gustav
 - [ ] Blast-radius score from reachability (sensitivity × exposure weighted)
 - [ ] `standing_blast_radius.v2` on reachability, replacing grant count
 - [ ] Attack-path rule: low-privilege / external identity → CRITICAL in ≤ k hops

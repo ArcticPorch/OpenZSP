@@ -25,6 +25,8 @@ from app.models.capability import (
 from app.models.permission import GrantLifecycle
 from app.models.resource import ResourceType, Sensitivity
 from app.evidence.models import RecordKind
+from app.graph.effective import ReachTier
+from app.graph.graph import Edge, EdgeKind
 from app.risk.models import RiskFactorType, RiskSubject, RiskSubjectType
 from app.risk.rules import RuleContext, RuleOutcome
 from app.risk.scoring import confidence_from_coverage
@@ -109,6 +111,12 @@ BULK_READ_WINDOW = timedelta(hours=1)
 BULK_READ_RECENT = timedelta(days=7)
 BULK_READ_MIN = 50
 BULK_READ_BASELINE_MULTIPLIER = 3.0
+
+# How far the engine walks the graph for each identity (a hop is one grant or
+# governs edge; stepping into a role is free). PROVISIONAL and uncalibrated:
+# gustav needs 2, and no TRAIN case bounds it from above yet, so the plateau
+# is one-sided -- a guess until the graph scenarios add the other edge.
+REACH_MAX_HOPS = 4
 
 # Which event actions count as *exercising* a grant.
 #
@@ -238,6 +246,26 @@ def _cite_grants(ctx: RuleContext, grant_ids: list[str]) -> tuple[str, ...]:
     for gid in grant_ids:
         out.extend(ctx.cite(RecordKind.PERMISSION_GRANT, gid))
     return tuple(dict.fromkeys(out))
+
+
+def _cite_path(ctx: RuleContext, path: tuple[Edge, ...]) -> tuple[str, ...]:
+    """
+    Every record a path rests on: each grant, and the resource record that
+    declared each becomes/governs link. A multi-hop finding that cited only
+    the first grant would explain none of the hops after it.
+    """
+    out: list[str] = []
+    for edge in path:
+        if edge.kind is EdgeKind.GRANT:
+            out.extend(ctx.cite(RecordKind.PERMISSION_GRANT, edge.permission.id))
+        else:
+            out.extend(ctx.cite(RecordKind.RESOURCE, edge.source.id))
+    return tuple(dict.fromkeys(out))
+
+
+def _last_grant(path: tuple[Edge, ...]) -> Optional[Edge]:
+    """The grant that confers the capability at the end of a path."""
+    return next((e for e in reversed(path) if e.kind is EdgeKind.GRANT), None)
 
 
 def _cite_events(ctx: RuleContext, events: list[Event]) -> tuple[str, ...]:
@@ -475,28 +503,46 @@ class StandingPermissionManagement:
     already covers and which `admin_on_low_sensitivity_sandbox` proves must not
     fire on its own. Joined to sensitivity for the same reason: permission
     management over a scratch project is not the same finding.
+
+    **v2 judges what the grant controls, not where it sits.** v1 read the
+    sensitivity of the resource the grant is attached to, so permission
+    management on a MEDIUM entitlements tool that governs a CRITICAL ledger
+    (`governed_crown_jewel`) read clean. v2 walks the identity's standing
+    effective reach and fires on any path whose *last grant* is explicit
+    permission management and which ends on a HIGH+ resource: the direct case
+    v1 caught, a `governs` hop, or a role stepped into on the way. "Last
+    grant" is what keeps ADMIN out -- a manager's effective capabilities
+    include manage_permission, but an admin path is the privilege rule's.
+    Standing tier only: a JIT hop anywhere on the path is not standing power.
+    Declines without a reach, like the peer rule without peers.
     """
 
-    rule_id = "standing_permission_management.v1"
+    rule_id = "standing_permission_management.v2"
     factor_type = RiskFactorType.EXCESSIVE_PRIVILEGE
 
     EXPLICIT = PERMISSION_ALTERING_CAPABILITIES - {Capability.ADMIN}
 
     def evaluate(self, ctx: RuleContext) -> RuleOutcome:
-        hits = []
-        for perm in ctx.identity.permissions:
-            if not perm.is_standing or perm.action not in self.EXPLICIT:
+        if ctx.reach is None:
+            return RuleOutcome.no_finding()
+
+        hits = {}  # resource id -> (capability, path); first in sorted order wins
+        for entry in ctx.reach.at_most(ReachTier.STANDING):
+            if entry.capability not in self.EXPLICIT or entry.resource_id in hits:
                 continue
-            res = ctx.resource(perm.resource_id)
-            if res is not None and res.sensitivity in {
-                Sensitivity.HIGH,
-                Sensitivity.CRITICAL,
-            }:
-                hits.append(perm)
+            last = _last_grant(entry.path)
+            if last is None or last.permission.action not in self.EXPLICIT:
+                continue
+            res = ctx.resource(entry.resource_id)
+            if res is not None and res.sensitivity in PRIVILEGED_SENSITIVITIES:
+                hits[entry.resource_id] = (last.permission.action, entry.path)
 
         if not hits:
             return RuleOutcome.no_finding()
 
+        indirect = sorted(rid for rid, (_, path) in hits.items() if len(path) > 1)
+        via = f", {len(indirect)} of them indirectly ({', '.join(indirect)})" if indirect else ""
+        paths = [path for _, path in hits.values()]
         return RuleOutcome(
             fired=True,
             subject=_identity_subject(ctx),
@@ -504,15 +550,17 @@ class StandingPermissionManagement:
             likelihood=8.5,
             confidence=confidence_from_coverage(ctx.coverage),
             description=(
-                f"Standing {', '.join(sorted({p.action.value for p in hits}))} on "
-                f"{len(hits)} high-value resource(s): this identity can grant "
+                f"Standing {', '.join(sorted({cap.value for cap, _ in hits.values()}))} over "
+                f"{len(hits)} high-value resource(s){via}: this identity can grant "
                 "itself any other permission."
             ),
             recommendation=(
                 "Make permission management JIT-eligible with approval; standing "
                 "rights here make every other control advisory."
             ),
-            evidence_ids=_cite_grants(ctx, [p.id for p in hits]),
+            evidence_ids=tuple(
+                dict.fromkeys(eid for path in paths for eid in _cite_path(ctx, path))
+            ),
         )
 
 

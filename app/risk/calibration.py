@@ -30,14 +30,11 @@ TUNABLE_MODULES = (detections, scoring)
 # everything else: counting these would leave no value "all correct" and hide
 # every plateau, while dropping the label would hide the gap. Keep this list
 # short and remove an entry the moment a rule closes it.
-STRUCTURAL_MISSES: frozenset[str] = frozenset(
-    {
-        # The grant sits on a MEDIUM tool; the CRITICAL ledger is one `governs`
-        # hop away, and no rule reads `governs` yet. Closed by a rule on
-        # effective reach (TODO: standing_permission_management.v2).
-        "gustav/EXCESSIVE_PRIVILEGE",
-    }
-)
+#
+# History: gustav/EXCESSIVE_PRIVILEGE (2026-09-29, a MEDIUM tool governing a
+# CRITICAL ledger) was closed by standing_permission_management.v2 reading
+# effective reach (2026-09-30).
+STRUCTURAL_MISSES: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

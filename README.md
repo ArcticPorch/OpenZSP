@@ -15,15 +15,13 @@ access worth converting.
 ```
                  train   fresh v1   fresh v2
   precision     100.0%     76.5%      86.7%
-  recall         97.9%    100.0%     100.0%
+  recall        100.0%    100.0%     100.0%
   specificity   100.0%     60.0%      77.8%
 
-  84 labelled scenarios · 134 labels (82 positive, 52 negative controls) · 19 rules · 277 tests
+  84 labelled scenarios · 134 labels (82 positive, 52 negative controls) · 19 rules · 324 tests
 ```
 
-> **Read these numbers carefully.** TRAIN is where thresholds are tuned, so it is in-sample. Its one
-> miss is deliberate and documented: permission management on a mid-tier tool that *governs* a
-> crown jewel, which no per-grant rule can see. It stays until the reachability rules close it.
+> **Read these numbers carefully.** TRAIN is where thresholds are tuned, so its 100% is in-sample.
 > Each **FRESH** column is a set of scenarios written *after* the rules were frozen and read
 > exactly once. After the first reading, the failure *shapes* it exposed (an emergency account
 > meant to sit unused, a job with little history, a department that is a minority but not absent

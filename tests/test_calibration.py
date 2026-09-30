@@ -115,9 +115,10 @@ def test_plateau_picks_the_widest_run():
     assert calibration.plateau([pt(1, False)]) is None
 
 
-def test_structural_misses_do_not_hide_the_plateau():
+def test_structural_misses_do_not_hide_the_plateau(monkeypatch):
     """No threshold can move them, so they must not make every value imperfect."""
-    [structural] = sorted(calibration.STRUCTURAL_MISSES)[:1]
+    structural = "someone/EXCESSIVE_PRIVILEGE"
+    monkeypatch.setattr(calibration, "STRUCTURAL_MISSES", frozenset({structural}))
     only_structural = calibration.SweepPoint(1, 1, 1, 1, (), (structural,), 0)
     assert only_structural.perfect and only_structural.errors == 0
     tunable = calibration.SweepPoint(1, 1, 1, 1, (), (structural, "x/STALE_ACCESS"), 0)

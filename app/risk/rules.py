@@ -31,6 +31,7 @@ from app.common.validation import (
     validate_tz_datetime,
 )
 from app.evidence.models import RecordKind
+from app.graph.effective import EffectiveReach
 from app.models.event import Event
 from app.models.identity import Identity
 from app.models.resource import Resource
@@ -75,6 +76,11 @@ class RuleContext:
     # rules stay O(1) in estate size. None means "no baseline was computed"
     # (a single-identity assessment), and peer rules decline rather than guess.
     peers: Optional[PeerBaseline] = None
+    # This identity's effective reach through the graph, computed by the
+    # engine -- never walked by a rule. Like `peers`, it is precomputed and
+    # read for one identity only, so rules stay O(1) in estate size. None means
+    # no walk was done, and graph rules decline rather than guess.
+    reach: Optional[EffectiveReach] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.identity, Identity):
@@ -100,6 +106,16 @@ class RuleContext:
                 )
         if self.peers is not None and not isinstance(self.peers, PeerBaseline):
             raise TypeError(f"peers must be a PeerBaseline, got {type(self.peers).__name__}")
+        if self.reach is not None:
+            if not isinstance(self.reach, EffectiveReach):
+                raise TypeError(
+                    f"reach must be an EffectiveReach, got {type(self.reach).__name__}"
+                )
+            if self.reach.identity_id != self.identity.id:
+                raise ValueError(
+                    f"reach is for identity '{self.reach.identity_id}' but context "
+                    f"identity is '{self.identity.id}'"
+                )
         if self.coverage.identity_id != self.identity.id:
             raise ValueError(
                 f"coverage is for identity '{self.coverage.identity_id}' but context "

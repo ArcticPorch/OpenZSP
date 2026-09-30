@@ -11,9 +11,12 @@ from datetime import datetime
 from typing import Optional, Sequence
 
 from app.common.validation import validate_tz_datetime
+from app.graph.effective import effective_reach
+from app.graph.graph import IdentityGraph
 from app.models.identity import Identity, IdentityType
 from app.risk.baselines import PeerBaseline
 from app.risk.coverage import CoverageAnalyzer, CoverageSummary, EvidenceIndex
+from app.risk import detections
 from app.risk.detections import ALL_RULES
 from app.risk.features import FeatureExtractor
 from app.risk.models import RiskAssessment, RiskFactorAssessment
@@ -63,8 +66,20 @@ class RiskEngine:
         index: EvidenceIndex,
         evaluation_time: datetime,
         peers: Optional[PeerBaseline] = None,
+        graph: Optional[IdentityGraph] = None,
     ) -> IdentityResult:
         validate_tz_datetime(evaluation_time, "evaluation_time")
+
+        # Without the estate's graph, walk the one we can honestly build: this
+        # identity and the resources. Governs links still resolve (they live on
+        # resources); roles cannot be stepped into, because their grants are
+        # not here. A narrower reach, not a wrong one.
+        if graph is None:
+            graph = IdentityGraph.build([identity], resources)
+        # Read at call time so a sweep can override it by name.
+        reach = effective_reach(
+            graph, identity.id, at=evaluation_time, max_hops=detections.REACH_MAX_HOPS
+        )
 
         features = FeatureExtractor.extract_features(
             identity, resources, events, evaluation_time
@@ -79,6 +94,7 @@ class RiskEngine:
             events=tuple(e for e in events if e.identity_id == identity.id),
             index=index,
             peers=peers,
+            reach=reach,
         )
 
         reported: list[RiskFactorAssessment] = []
@@ -126,11 +142,15 @@ class RiskEngine:
     def assess_estate(
         self, estate, evaluation_time: datetime
     ) -> tuple[IdentityResult, ...]:
-        # The cross-identity pre-pass: built once, read by key inside rules.
+        # The cross-identity pre-passes: built once, read per identity inside
+        # rules. The graph includes roles -- they are walked through, even
+        # though they are not assessed as subjects.
         peers = PeerBaseline.build(estate.identities)
+        graph = IdentityGraph.from_estate(estate)
         return tuple(
             self.assess_identity(
-                identity, estate.resources, estate.events, estate, evaluation_time, peers
+                identity, estate.resources, estate.events, estate, evaluation_time, peers,
+                graph,
             )
             for identity in estate.identities
             if is_assessed(identity)

@@ -1540,10 +1540,11 @@ def _governed_crown_jewel(b: EvidenceBuilder, rng: random.Random) -> list[Eviden
     Permission management on a mid-tier tool that controls a CRITICAL ledger.
 
     Every grant-level check reads clean: the grant sits on a MEDIUM resource,
-    so `standing_permission_management.v1` -- which judges the resource the
-    grant is *on* -- stays quiet. But whoever manages the tool's permission
+    so `standing_permission_management.v1` -- which judged the resource the
+    grant is *on* -- stayed quiet. But whoever manages the tool's permission
     table decides who holds the treasury ledger, including themselves. The
-    finding lives one `governs` hop away from the grant.
+    finding lives one `governs` hop away from the grant; v2 reads it through
+    effective reach.
     """
     return _entitlements_admin(
         b, "gustav", "Gustav Lindqvist",

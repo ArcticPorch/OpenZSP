@@ -113,7 +113,7 @@ Scoring is **rules carrying their own confidence**, aggregated probabilistically
 ### The rule contract
 
 - A **non-finding is a first-class result**, not `None` — `should_fire=False` controls need "ran and declined" to be representable. `RuleOutcome` rejects `fired=False` carrying scores, a description, a subject, or evidence ids.
-- `RuleContext` is deliberately **not** the `Estate`. A rule that can reach the whole estate grows cross-identity logic. Every rule stays O(1) in estate size; the one cross-identity fact (`peers`, a precomputed `PeerBaseline`) is read by key.
+- `RuleContext` is deliberately **not** the `Estate`. A rule that can reach the whole estate grows cross-identity logic. Every rule stays O(1) in estate size; the cross-identity facts are precomputed by the engine and read for one identity: `peers` (a `PeerBaseline`, read by key) and `reach` (this identity's `EffectiveReach`, walked once over a graph built once per estate). A rule never walks the graph itself; without a reach, graph rules decline. `assess_identity` without an estate walks a graph of just that identity and the resources — `governs` still resolves, roles cannot be stepped into.
 - **Assessment ids are derived** from `(rule_id, subject)`, never generated, so two runs over identical evidence produce byte-identical, diffable assessments — the same reproducibility guarantee `content_id` gives evidence.
 - `rule_id` is authored and versioned (`"stale_standing_access.v1"`), not derived from the class name: renaming a class must not change ids already stored in assessments.
 
@@ -128,11 +128,11 @@ Scoring is **rules carrying their own confidence**, aggregated probabilistically
 ```
                  train   holdout   fresh      gap
   precision     100.0%     95.7%   86.7%   -13.3%
-  recall         97.9%    100.0%  100.0%    +2.1%
+  recall        100.0%    100.0%  100.0%    +0.0%
   specificity   100.0%     94.1%   77.8%   -22.2%
 ```
 
-FRESH v1 (after cycle 1) read 76.5% precision / 60.0% specificity; FRESH v2 (after cycle 2) reads 86.7% / 77.8%, recall 100% both times. Whole corpus: 81 TP · 3 FP · 1 FN · 49 TN, zero unlabelled firings. **Quote FRESH, not TRAIN.**
+FRESH v1 (after cycle 1) read 76.5% precision / 60.0% specificity; FRESH v2 (after cycle 2) reads 86.7% / 77.8%, recall 100% both times. Whole corpus: 82 TP · 3 FP · 0 FN · 49 TN, zero unlabelled firings. **Quote FRESH, not TRAIN.**
 
 **The discipline:** tune against TRAIN, freeze, write and read FRESH once, and never move a threshold because a FRESH number looked bad — the moment you do, FRESH is training data. When a FRESH reading reveals a failure *shape*, the fix is a new TRAIN case of that shape in a different domain (never a copy of the FRESH scenario), then the next cycle. `app/risk/calibration.py` enforces part of this: `sweep()` raises on any split but TRAIN. `test_detection_meets_calibration_floors` is measured on TRAIN only (floors 0.90 precision / 0.85 recall / 1.00 specificity; raise them when detection genuinely improves, never lower one to make a change pass). `test_no_negative_control_fires_in_train` demands zero false alarms on TRAIN only; held-out false alarms are *measurements*, pinned exactly:
 
@@ -142,7 +142,7 @@ FRESH v1 (after cycle 1) read 76.5% precision / 60.0% specificity; FRESH v2 (aft
 
 `tests/test_split.py` guards the rest: the splits partition cleanly, **no subject appears in two splits**, both held-out splits carry both polarities, span ≥4 factor types and have ≥6 positives / ≥3 negatives, TRAIN keeps ≥50% of labels and FRESH ≥10%, and a per-split score agrees pair-for-pair with the whole-corpus score. That last one rests on scenario independence — and, for the peer rule, on `test_no_resource_is_shared_between_scenarios`.
 
-The only miss is **structural**: `gustav / EXCESSIVE_PRIVILEGE` turns on `Resource.governs`, which no rule reads yet, so no threshold can move it. `calibration.STRUCTURAL_MISSES` lists such misses (each naming what closes it); sweeps ignore them when finding plateaus, and `test_known_misses_are_exactly_the_documented_ones` pins the actual misses to exactly that list. Remove the entry the moment a rule closes it. oscar was fixed by `peer_access_outlier.v1`, agent_ops by `privilege_creep.v1`. `frank / EXCESSIVE_PRIVILEGE` was removed as a label on review (it double-counted his departure). **Never remove or flip a label because the engine misses it** — decide on what the factor type means, write the reason on the scenario, and report the metric change as a label change. Triage of an unlabelled firing follows the truth whichever way it moves the number.
+There are **no known misses**. `calibration.STRUCTURAL_MISSES` (currently empty) lists misses no threshold can move because no rule reads the fact they turn on, each naming what closes it; sweeps ignore them when finding plateaus, and `test_known_misses_are_exactly_the_documented_ones` pins the actual misses to exactly that list. Remove an entry the moment a rule closes it. gustav was the first: a structural miss from 2026-09-29 until `standing_permission_management.v2` read `governs` through effective reach. oscar was fixed by `peer_access_outlier.v1`, agent_ops by `privilege_creep.v1`. `frank / EXCESSIVE_PRIVILEGE` was removed as a label on review (it double-counted his departure). **Never remove or flip a label because the engine misses it** — decide on what the factor type means, write the reason on the scenario, and report the metric change as a label change. Triage of an unlabelled firing follows the truth whichever way it moves the number.
 
 The privilege rule's sensitivity line is pinned from both sides in TRAIN: bob CRITICAL fires, `hugo` HIGH fires, `ines` MEDIUM must not; `henry` LOW guards it in holdout. HIGH was a labelling decision by the user on 2026-09-29: whoever needs admin on a HIGH resource should request it JIT.
 
@@ -161,6 +161,7 @@ The privilege rule's sensitivity line is pinned from both sides in TRAIN: bob CR
 | `PEER_MAX_SAME_DEPT_SHARE` | 0 – <0.2 | 0.1 (cycle 2, from 0.25) |
 | `MIN_REPORTING_CONFIDENCE` | >0.095 – 0.57 | 0.35 (kept) |
 | `BULK_READ_BASELINE_MULTIPLIER` | >1.67 – 6.5 | 3 (kept) |
+| `REACH_MAX_HOPS` | ≥2, **no upper edge** | 4 — provisional, uncalibrated until graph scenarios bound it (gustav sets the lower edge) |
 
 Each is bounded on both sides by a TRAIN label (carol/yara, growth ETL/sofia, SREs/oscar, key rotation/marta, semiannual/quarterly job). A threshold whose plateau is bounded on only one side is a guess — add the missing TRAIN case before tuning it. `tests/test_calibration.py` pins these plateaus, so an edit has to re-run the sweep. After any calibration change, regenerate the README chart: `./venv/Scripts/python.exe -m app.main --curves docs/tuning_curves.svg` (`app/risk/curves.py`, dependency-free SVG, ~20 s).
 

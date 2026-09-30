@@ -309,8 +309,9 @@ def test_known_misses_are_exactly_the_documented_ones():
     History: oscar/CONTEXT_MISMATCH was fixed by `peer_access_outlier.v1` and
     agent_ops/EXCESSIVE_PRIVILEGE by `privilege_creep.v1` (both 2026-09-29,
     tuned on TRAIN). frank's was removed as a label on review, not fixed -- it
-    double-counted his departure. gustav/EXCESSIVE_PRIVILEGE (2026-09-29) waits
-    for a rule that reads `governs`.
+    double-counted his departure. gustav/EXCESSIVE_PRIVILEGE was a structural
+    miss (2026-09-29) until `standing_permission_management.v2` read `governs`
+    through effective reach (2026-09-30).
     """
     m = evaluate(ANCHOR)
     assert {f"{o.subject_id}/{o.factor_type}" for o in m.misses()} == STRUCTURAL_MISSES
