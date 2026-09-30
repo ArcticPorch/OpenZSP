@@ -26,18 +26,7 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [x] `app/graph/`: build identity–resource graph from `Estate`
 - [x] Edge types: holds (capability, lifecycle), assumes/impersonates, manages-permission (+ `Resource.governs`, gustav/hanna pair)
 - [x] Reachability: BFS with hop limit, keep paths
-- [ ] Effective reach per identity: (resource, capability) set; standing vs JIT-only
-  - **In progress (paused 2026-09-29).** Decided: four tiers, easiest wins, weakest link per path —
-    STANDING → TEMPORARY (live time-bound/elevated) → EXPIRED_ATTACHED (revocation failed) →
-    JIT_ONLY (needs approval, or a scheduled window). Tier beats hop count.
-  - [x] `app/graph/effective.py` written: `ReachTier`, `grant_tier`, `effective_reach` (one `reach`
-    walk per tier, nested filters), `EffectiveReach.at_most/get/resource_ids`, per-tier `truncated`
-    (uncommitted, imports; not yet tested)
-  - [ ] `tests/test_effective_reach.py`: four-tier fixture; weakest link (standing hop + time-bound
-    hop = TEMPORARY); tier beats length; `grant_tier` per lifecycle incl. not-yet-started
-    time-bound → JIT_ONLY; tiered principals; per-tier truncation; naive `at` rejected; corpus:
-    `at_most(JIT_ONLY)` == `reach(any_grant)`, irene's role reach is JIT_ONLY
-  - [ ] `CLAUDE.md` architecture line + note; graph guide section 5 + decisions-log entry; commit
+- [x] Effective reach per identity: (resource, capability) set; standing / temporary / expired-attached / JIT-only
 - [ ] `standing_permission_management.v2` on effective reach — closes structural miss gustav
 - [ ] Blast-radius score from reachability (sensitivity × exposure weighted)
 - [ ] `standing_blast_radius.v2` on reachability, replacing grant count

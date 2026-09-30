@@ -41,6 +41,7 @@ app/models/            domain facts        Identity, Permission, Resource, Event
 app/graph/graph.py     IdentityGraph: grant / becomes / governs edges   (structure only, timeless)
 app/graph/semantics.py what a grant edge means: holds · assumes · manages-permission
 app/graph/reach.py     reach(graph, id, max_hops, usable) → Reach: (resource, capability) + one shortest path each
+app/graph/effective.py effective_reach(graph, id, at, max_hops) → each reached pair labelled with its easiest tier
       ↓
 app/risk/features.py   FeatureExtractor → IdentityFeatures   (measurements only)
 app/risk/coverage.py   CoverageAnalyzer → CoverageSummary    (how much we saw)
@@ -224,6 +225,8 @@ Two optional `Resource` links, both **explicit** so a coincidental id match can 
 `IdentityGraph` keeps **every** grant as an edge (JIT and expired included) with the `Permission` on it; whether an edge counts at time t is traversal's call. Nodes are keyed by `(kind, id)`; unknown references become bare nodes. `semantics.py` states meanings **per capability** (`can_assume`, `manages_permission`, `effective_capabilities`) so traversal can apply them to derived capabilities: manage-permission ⇒ effectively every capability on the resource and on what it governs; `impersonate`/`manage_identity`/`manage_permission`/`admin` on an assumable resource ⇒ become its principal.
 
 `reach()` walks level by level. **A hop is a grant or governs edge; crossing `becomes` is free** (one role = two hops). It keeps **one shortest path** per (resource, capability), ties broken by sorted edge order, so paths are deterministic citations. Which grants count is always the caller's explicit `usable` (`standing_only`, `active_at(t)`, `any_grant`) — never a default. `truncated` is True when the hop limit stopped the walk with edges left to follow: "nothing more" and "stopped looking" are different claims.
+
+`effective_reach()` runs one walk per `ReachTier`, with nested filters: **STANDING → TEMPORARY** (live time-bound/elevated) **→ EXPIRED_ATTACHED** (works only if revocation failed) **→ JIT_ONLY** (needs an approval, or a scheduled window). Each (resource, capability) gets the easiest tier that reaches it. A path is as hard as its **weakest link**, and **tier beats hop count**. Expired-attached is its own tier on purpose: filing it under JIT would read a failed revocation as "needs approval". `truncated` is per tier.
 
 ### Exposure
 
