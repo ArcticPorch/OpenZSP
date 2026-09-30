@@ -31,8 +31,19 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [x] Blast-radius score from reachability (sensitivity × exposure weighted)
 - [x] `standing_blast_radius.v2` on reachability, replacing grant count
 - [x] Attack-path rule: indirect path → control of CRITICAL in ≤ k hops (any origin, per target; petra/quinn pair)
-- [ ] Choke points: edges that cut the most paths
+- [x] Choke points: edges that cut the most paths (verified by removal; attack + governs routes)
 - [ ] Graph scenarios: multi-hop positives; traps (JIT hop, broken chain, LOW-only reach)
+  - **Start here next session.** Already in TRAIN: gustav/hanna (governs), petra/quinn (role path,
+    JIT-hop trap). Still needed, each as a positive + trap pair in a new domain:
+    - a 3–4 hop chain (role → role → crown jewel) and one just *beyond* the hop limit — gives
+      `REACH_MAX_HOPS` / `ATTACK_PATH_MAX_HOPS` their missing upper edge (both provisional at 4)
+    - governs → role resource → crown jewel (becoming a role by rewriting its trust)
+    - broken chain: role link to a principal with no grants / a dangling principal
+    - LOW-only reach through a role (breadth without a crown jewel)
+    - a role shared by several contractors, so choke-point ranking has something to rank
+    - role-hidden sprawl for `standing_blast_radius.v2` (one grant onto a wide role)
+  - Open question for the user: give irene / kwame / rahul's role-shaped resources real principals?
+    (changes already-labelled scenarios)
 - [ ] Labels + TRAIN / FRESH split for graph scenarios
 - [ ] Calibrate hop limit and score thresholds (TRAIN only), read FRESH once
 - [ ] CLI: `--paths <identity>`, `--blast-radius`

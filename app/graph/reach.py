@@ -130,8 +130,17 @@ class _Step:
 
 
 def reach(
-    graph: IdentityGraph, identity_id: str, *, max_hops: int, usable: UsableGrant
+    graph: IdentityGraph,
+    identity_id: str,
+    *,
+    max_hops: int,
+    usable: UsableGrant,
+    blocked: frozenset[str] = frozenset(),
 ) -> Reach:
+    """
+    `blocked` names edges (by `edge_id`) the walk must not use -- the "what if
+    this link were gone?" question choke-point analysis asks.
+    """
     if isinstance(max_hops, bool) or not isinstance(max_hops, int):
         raise TypeError(f"max_hops must be an int, got {type(max_hops).__name__}")
     if max_hops < 0:
@@ -159,6 +168,8 @@ def reach(
                 for edge in graph.out_edges(step.node):
                     if edge.kind is not EdgeKind.GRANT or not usable(edge.permission):
                         continue
+                    if edge.edge_id in blocked:
+                        continue
                     if depth == max_hops:
                         truncated = True
                         continue
@@ -179,7 +190,11 @@ def reach(
 
             if any(can_assume(c) for c in step.capabilities):
                 for edge in graph.out_edges(step.node):
-                    if edge.kind is EdgeKind.BECOMES and edge.target not in entered:
+                    if (
+                        edge.kind is EdgeKind.BECOMES
+                        and edge.target not in entered
+                        and edge.edge_id not in blocked
+                    ):
                         entered.add(edge.target)
                         path = step.path + (edge,)
                         became[edge.target.id] = Became(edge.target.id, path)
@@ -188,7 +203,7 @@ def reach(
             if any(manages_permission(c) for c in step.capabilities) and step.node not in managed:
                 managed.add(step.node)
                 for edge in graph.out_edges(step.node):
-                    if edge.kind is not EdgeKind.GOVERNS:
+                    if edge.kind is not EdgeKind.GOVERNS or edge.edge_id in blocked:
                         continue
                     if depth == max_hops:
                         truncated = True

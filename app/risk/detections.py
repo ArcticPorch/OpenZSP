@@ -12,9 +12,9 @@ point of carrying confidence per finding rather than per report.
 """
 
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from statistics import median
-from typing import Optional
+from typing import Callable, Optional
 
 from app.models.event import Event, EventAction
 from app.models.capability import (
@@ -23,9 +23,10 @@ from app.models.capability import (
     Capability,
 )
 from app.models.permission import GrantLifecycle
-from app.models.resource import ResourceType, Sensitivity
+from app.models.identity import Identity
+from app.models.resource import Resource, ResourceType, Sensitivity
 from app.evidence.models import RecordKind
-from app.graph.effective import ReachTier, grant_tier
+from app.graph.effective import EffectiveReach, ReachTier, TieredReach, grant_tier
 from app.graph.semantics import effective_capabilities
 from app.graph.graph import Edge, EdgeKind
 from app.risk import scoring
@@ -1144,6 +1145,59 @@ class RoleAssumptionChain:
 # --- EXTERNAL_EXPOSURE -----------------------------------------------------
 
 
+# The route search shared by the attack-path rule and choke-point analysis, so
+# "what counts as a route to a crown jewel" is written once and cannot drift
+# between the finding and the remediation advice.
+LIVE_TIER = ReachTier.EXPIRED_ATTACHED
+
+
+def controls(capability: Capability, resource: Resource) -> bool:
+    """Control of a resource: a privileged capability, or reading a secret store."""
+    if capability.is_privileged:
+        return True
+    return capability is Capability.READ and resource.resource_type is ResourceType.SECRET_STORE
+
+
+def crown_jewel_routes(
+    identity: Identity,
+    reach: EffectiveReach,
+    resource: Callable[[str], Optional[Resource]],
+    at: datetime,
+    *,
+    skip: Callable[[TieredReach], bool] = lambda entry: False,
+) -> dict[str, TieredReach]:
+    """
+    CRITICAL resources this identity controls only indirectly, with the route.
+
+    Indirect: 2 to `ATTACK_PATH_MAX_HOPS` hops in the live cut, and no live
+    direct grant on the target conferring control -- those belong to the
+    privilege rules. One route per target: fewest hops, then easiest tier.
+    """
+    held_directly = set()
+    for perm in identity.permissions:
+        res = resource(perm.resource_id)
+        if res is None or grant_tier(perm, at).rank > LIVE_TIER.rank:
+            continue
+        if any(controls(c, res) for c in effective_capabilities(perm.action)):
+            held_directly.add(perm.resource_id)
+
+    targets: dict[str, TieredReach] = {}
+    for entry in reach.at_most(LIVE_TIER):
+        if entry.resource_id in held_directly:
+            continue
+        if not 2 <= entry.hops <= ATTACK_PATH_MAX_HOPS:
+            continue
+        res = resource(entry.resource_id)
+        if res is None or res.sensitivity is not Sensitivity.CRITICAL:
+            continue
+        if not controls(entry.capability, res) or skip(entry):
+            continue
+        current = targets.get(entry.resource_id)
+        if current is None or (entry.hops, entry.tier.rank) < (current.hops, current.tier.rank):
+            targets[entry.resource_id] = entry
+    return targets
+
+
 class AttackPathToCrownJewel:
     """
     Control of a crown jewel reachable only through someone or something else.
@@ -1179,49 +1233,25 @@ class AttackPathToCrownJewel:
     rule_id = "attack_path_to_crown_jewel.v1"
     factor_type = RiskFactorType.PRIVILEGE_ESCALATION
 
-    LIVE = ReachTier.EXPIRED_ATTACHED
     PERMISSION_MANAGEMENT = PERMISSION_ALTERING_CAPABILITIES - {Capability.ADMIN}
 
-    @staticmethod
-    def _controls(capability: Capability, resource) -> bool:
-        if capability.is_privileged:
-            return True
-        return capability is Capability.READ and resource.resource_type is ResourceType.SECRET_STORE
+    @classmethod
+    def reported_by_permission_management(cls, entry: TieredReach) -> bool:
+        """A standing path ending in permission management: v2's finding, not ours."""
+        last = _last_grant(entry.path)
+        return (
+            entry.tier is ReachTier.STANDING
+            and last is not None
+            and last.permission.action in cls.PERMISSION_MANAGEMENT
+        )
 
     def evaluate(self, ctx: RuleContext) -> RuleOutcome:
         if ctx.reach is None:
             return RuleOutcome.no_finding()
-
-        held_directly = set()
-        for perm in ctx.identity.permissions:
-            res = ctx.resource(perm.resource_id)
-            if res is None or grant_tier(perm, ctx.evaluation_time).rank > self.LIVE.rank:
-                continue
-            if any(self._controls(c, res) for c in effective_capabilities(perm.action)):
-                held_directly.add(perm.resource_id)
-
-        targets = {}  # resource id -> shortest qualifying entry
-        for entry in ctx.reach.at_most(self.LIVE):
-            if entry.resource_id in held_directly:
-                continue
-            if not 2 <= entry.hops <= ATTACK_PATH_MAX_HOPS:
-                continue
-            res = ctx.resource(entry.resource_id)
-            if res is None or res.sensitivity is not Sensitivity.CRITICAL:
-                continue
-            if not self._controls(entry.capability, res):
-                continue
-            last = _last_grant(entry.path)
-            if (
-                entry.tier is ReachTier.STANDING
-                and last is not None
-                and last.permission.action in self.PERMISSION_MANAGEMENT
-            ):
-                continue  # standing_permission_management.v2's finding
-            current = targets.get(entry.resource_id)
-            if current is None or (entry.hops, entry.tier.rank) < (current.hops, current.tier.rank):
-                targets[entry.resource_id] = entry
-
+        targets = crown_jewel_routes(
+            ctx.identity, ctx.reach, ctx.resource, ctx.evaluation_time,
+            skip=self.reported_by_permission_management,
+        )
         if not targets:
             return RuleOutcome.no_finding()
 

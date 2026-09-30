@@ -111,7 +111,12 @@ class EffectiveReach:
 
 
 def effective_reach(
-    graph: IdentityGraph, identity_id: str, *, at: datetime, max_hops: int
+    graph: IdentityGraph,
+    identity_id: str,
+    *,
+    at: datetime,
+    max_hops: int,
+    blocked: frozenset[str] = frozenset(),
 ) -> EffectiveReach:
     validate_tz_datetime(at, "at")
     entries: dict[tuple[str, Capability], TieredReach] = {}
@@ -124,6 +129,7 @@ def effective_reach(
             identity_id,
             max_hops=max_hops,
             usable=lambda p, tier=tier: grant_tier(p, at).rank <= tier.rank,
+            blocked=blocked,
         )
         if walk.truncated:
             truncated.append(tier)

@@ -250,3 +250,28 @@ def test_one_hop_reach_is_exactly_the_direct_grants():
         }
         got = reach(graph, identity.id, max_hops=1, usable=any_grant)
         assert {(r.resource_id, r.capability) for r in got.resources} == expected
+
+
+# --- Blocked edges ---------------------------------------------------------
+
+
+def test_blocked_edges_are_not_walked():
+    """Each kind of edge can be blocked: the grant, the role link, the governs link."""
+    assert reach(role_chain(), "irene", max_hops=3, usable=any_grant,
+                 blocked=frozenset({"g_role"})).resource_ids() == ("fin_role_res",)
+    r = reach(role_chain(), "irene", max_hops=3, usable=any_grant,
+              blocked=frozenset({"becomes:fin_role_res"}))
+    assert r.resource_ids() == ("fin_role_res",) and r.principals == ()
+    assert reach(governed(), "gus", max_hops=3, usable=any_grant,
+                 blocked=frozenset({"governs:tool>ledger"})).resource_ids() == ("tool",)
+
+
+def test_blocking_one_route_leaves_the_other():
+    graph = graph_of(
+        person("a"), role("r1"), role("r2"),
+        res("r1_res", principal_id="r1"), res("r2_res", principal_id="r2"), res("db"),
+        grant("g_a1", "a", "r1_res", "impersonate"), grant("g_a2", "a", "r2_res", "impersonate"),
+        grant("g_1", "r1", "db", "read"), grant("g_2", "r2", "db", "read"),
+    )
+    r = reach(graph, "a", max_hops=3, usable=any_grant, blocked=frozenset({"g_a1"}))
+    assert ids(r.get("db", Capability.READ).path)[0] == "g_a2"

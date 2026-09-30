@@ -18,7 +18,7 @@ access worth converting.
   recall        100.0%    100.0%     100.0%
   specificity   100.0%     60.0%      77.8%
 
-  86 labelled scenarios · 136 labels (83 positive, 53 negative controls) · 20 rules · 364 tests
+  86 labelled scenarios · 136 labels (83 positive, 53 negative controls) · 20 rules · 374 tests
 ```
 
 > **Read these numbers carefully.** TRAIN is where thresholds are tuned, so its 100% is in-sample.
