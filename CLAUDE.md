@@ -47,6 +47,7 @@ app/risk/features.py   FeatureExtractor → IdentityFeatures   (measurements onl
 app/risk/coverage.py   CoverageAnalyzer → CoverageSummary    (how much we saw)
       ↓
 app/risk/rules.py      Rule protocol, RuleContext, RuleOutcome (the contract)
+app/risk/blast_radius.py blast_radius(reach, resources, cut) → weighted sum over reach, per-resource shares
 app/risk/baselines.py  PeerBaseline — the one cross-identity pre-pass, built once per estate
 app/risk/detections.py 19 concrete rules across all 7 factor types
       ↓
@@ -226,6 +227,8 @@ Two optional `Resource` links, both **explicit** so a coincidental id match can 
 `IdentityGraph` keeps **every** grant as an edge (JIT and expired included) with the `Permission` on it; whether an edge counts at time t is traversal's call. Nodes are keyed by `(kind, id)`; unknown references become bare nodes. `semantics.py` states meanings **per capability** (`can_assume`, `manages_permission`, `effective_capabilities`) so traversal can apply them to derived capabilities: manage-permission ⇒ effectively every capability on the resource and on what it governs; `impersonate`/`manage_identity`/`manage_permission`/`admin` on an assumable resource ⇒ become its principal.
 
 `reach()` walks level by level. **A hop is a grant or governs edge; crossing `becomes` is free** (one role = two hops). It keeps **one shortest path** per (resource, capability), ties broken by sorted edge order, so paths are deterministic citations. Which grants count is always the caller's explicit `usable` (`standing_only`, `active_at(t)`, `any_grant`) — never a default. `truncated` is True when the hop limit stopped the walk with edges left to follow: "nothing more" and "stopped looking" are different claims.
+
+**Blast radius** (`app/risk/blast_radius.py`, weights in `scoring.py` as `BLAST_*`): each reachable resource counts once, at its most dangerous capability within the cut; weight = sensitivity (1/3/10/30) × exposure (1/1.25/1.5) × capability (privileged 1, write 0.5, read 0.2; READ on a secret store is privileged). The score is a **sum, not a saturating combination** — it exists to rank identities that reach a lot, and `1 − Π(1 − p)` puts everyone with two crown jewels at ~100; the bound is applied once, by the rule's impact and `aggregate_risk`. Three **cuts** instead of discount weights: `STANDING`, `LIVE` (≤ expired-attached), `POTENTIAL` (JIT included). Unknown resources and UNKNOWN-only reach are listed, weight 0. The raw score mixes depth and breadth (one CRITICAL admin = 30, above `svc_ml_train`'s 11.2), so a rule cannot threshold it alone.
 
 `effective_reach()` runs one walk per `ReachTier`, with nested filters: **STANDING → TEMPORARY** (live time-bound/elevated) **→ EXPIRED_ATTACHED** (works only if revocation failed) **→ JIT_ONLY** (needs an approval, or a scheduled window). Each (resource, capability) gets the easiest tier that reaches it. A path is as hard as its **weakest link**, and **tier beats hop count**. Expired-attached is its own tier on purpose: filing it under JIT would read a failed revocation as "needs approval". `truncated` is per tier.
 

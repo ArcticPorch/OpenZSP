@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Optional, Sequence
 
 from app.common.validation import validate_numeric
+from app.models.resource import Exposure, Sensitivity
 from app.risk.coverage import CoverageSummary
 from app.risk.models import RiskFactorAssessment, RiskLevel
 
@@ -41,6 +42,37 @@ RISK_LEVEL_BANDS: tuple[tuple[float, RiskLevel], ...] = (
     (25.0, RiskLevel.MEDIUM),
     (0.0, RiskLevel.LOW),
 )
+
+# Blast radius: what one reachable resource is worth if this identity is
+# compromised. weight = sensitivity x exposure x capability factor, summed over
+# resources (see `blast_radius.py`). Deliberately a sum, not a saturating
+# combination: blast radius exists to *rank* the identities that reach a lot,
+# and 1 - prod(1 - p) puts everyone with two crown jewels at ~100. The bound is
+# applied once, later -- a rule maps the sum to impact, and `aggregate_risk`
+# saturates across findings.
+#
+# Roughly 3x per sensitivity level, so crown jewels dominate: admin on thirty
+# LOW resources only equals admin on one CRITICAL resource, and reading thirty
+# LOW dashboards is worth a fifth of that.
+BLAST_SENSITIVITY_WEIGHT: dict[Sensitivity, float] = {
+    Sensitivity.LOW: 1.0,
+    Sensitivity.MEDIUM: 3.0,
+    Sensitivity.HIGH: 10.0,
+    Sensitivity.CRITICAL: 30.0,
+}
+# Resource-side reachability from outside. The identity side (`is_external`)
+# is deliberately absent: it changes how *likely* compromise is, not how much
+# a compromise reaches.
+BLAST_EXPOSURE_MULTIPLIER: dict[Exposure, float] = {
+    Exposure.INTERNAL: 1.0,
+    Exposure.VPC_PEERED: 1.25,
+    Exposure.PUBLIC: 1.5,
+}
+# What the capability lets an attacker do there. READ on a secret store is
+# privileged: a secret is someone else's access.
+BLAST_PRIVILEGED_FACTOR = 1.0
+BLAST_WRITE_FACTOR = 0.5
+BLAST_READ_FACTOR = 0.2
 
 ENGINE_VERSION = "0.1.0"
 RULE_VERSION = "2026.09.29"
