@@ -73,6 +73,11 @@ BLAST_EXPOSURE_MULTIPLIER: dict[Exposure, float] = {
 BLAST_PRIVILEGED_FACTOR = 1.0
 BLAST_WRITE_FACTOR = 0.5
 BLAST_READ_FACTOR = 0.2
+# Where the blast-radius sum is finally bounded: impact = 5 + 5 * s / (s + K).
+# K is "one crown jewel's worth" (admin on one internal CRITICAL resource), so
+# that much reach reads as 7.5 and the curve flattens towards 10 beyond it.
+# Anchored, not calibrated -- no label depends on impact.
+BLAST_IMPACT_HALF_SCORE = 30.0
 
 ENGINE_VERSION = "0.1.0"
 RULE_VERSION = "2026.09.29"
@@ -212,6 +217,15 @@ def risk_level(overall_score: float) -> RiskLevel:
         if overall_score >= threshold:
             return level
     return RiskLevel.LOW
+
+
+def blast_impact(score: float) -> float:
+    """
+    Map a blast-radius sum onto impact (5-10). Monotone and bounded: the one
+    place the sum saturates, so two crown jewels still read below twenty.
+    """
+    validate_numeric(score, "score", 0.0, float("inf"))
+    return 5.0 + 5.0 * score / (score + BLAST_IMPACT_HALF_SCORE)
 
 
 def is_reportable(confidence: float) -> bool:

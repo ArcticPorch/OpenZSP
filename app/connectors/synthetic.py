@@ -1599,15 +1599,23 @@ def _unmapped_capability_grants(b: EvidenceBuilder, rng: random.Random) -> list[
             granted_at=b.ago(days=200),
         ),
     ]
-    # Vocabulary from a system nobody has written a mapping table for yet.
-    for idx, action in enumerate(
-        ("vendorx.superuser", "vendorx.pipeline.orchestrate", "vendorx.tenant.rebind")
+    # Vocabulary from a system nobody has written a mapping table for yet,
+    # spread over the vendor's other components. Spread, because blast radius
+    # counts *resources*: four grants on one resource are depth, not breadth,
+    # and v2 rightly ignores that shape.
+    for idx, (action, (res_id, res_name)) in enumerate(
+        (
+            ("vendorx.superuser", ("vendor_admin_api", "Vendor Admin API")),
+            ("vendorx.pipeline.orchestrate", ("vendor_etl", "Vendor ETL")),
+            ("vendorx.tenant.rebind", ("vendor_tenants", "Vendor Tenant Registry")),
+        )
     ):
+        out.append(b.resource(res_id, res_name, "api", "high"))
         out.append(
             b.grant(
                 f"g_yusuf_opaque_{idx}",
                 "yusuf",
-                "vendor_platform",
+                res_id,
                 action,
                 granted_at=b.ago(days=200 - idx * 20),
             )
@@ -3304,12 +3312,13 @@ SCENARIOS: tuple[Scenario, ...] = (
             ExpectedFinding(
                 "EXCESSIVE_BLAST_RADIUS",
                 "yusuf",
-                "Four standing grants on a CRITICAL resource do trip the "
-                "blast-radius rule, and the engine must hold it back: three of "
-                "the four are Capability.UNKNOWN, so capability_coverage is "
-                "0.25 and confidence falls under the floor. Retained (dropping "
-                "understates access), reported as a coverage gap rather than "
-                "an all-clear.",
+                "Standing reach over four vendor resources, one CRITICAL, does "
+                "trip the blast-radius rule -- three are reached only through "
+                "Capability.UNKNOWN, which counts as breadth (not harmless) but "
+                "adds nothing to the score (not privileged) -- and the engine "
+                "must hold it back: capability_coverage is 0.25 and confidence "
+                "falls under the floor. Retained (dropping understates access), "
+                "reported as a coverage gap rather than an all-clear.",
                 should_fire=False,
             ),
         ),

@@ -154,3 +154,95 @@ def test_one_hop_limit_misses_gustav():
     assert "gustav/EXCESSIVE_PRIVILEGE" in low.false_negatives
     assert high.perfect
     assert detections.REACH_MAX_HOPS >= 2
+
+
+# --- standing_blast_radius.v2 --------------------------------------------------
+
+from app.risk import scoring
+from app.risk.detections import StandingBlastRadius
+
+BLAST = StandingBlastRadius()
+
+
+def blast_finding(estate, who):
+    result = {r.identity_id: r for r in RiskEngine(rules=[BLAST]).assess_estate(estate, ANCHOR)}[who]
+    found = result.assessment.triggered_factors + result.suppressed
+    return found[0] if found else None
+
+
+def wide_role(first=None, crown="critical"):
+    """x holds ONE grant -- onto a role that reaches four resources, one of them `crown`."""
+    first = first or {}
+    return est(
+        person("x"), role("r"), res("r_res", sensitivity="low", principal_id="r"),
+        res("jewel", sensitivity=crown),
+        *[res(f"svc{i}", sensitivity="medium") for i in range(3)],
+        grant("g_x", "x", "r_res", "impersonate", **first),
+        grant("g_jewel", "r", "jewel"),
+        *[grant(f"g_svc{i}", "r", f"svc{i}", "write") for i in range(3)],
+    )
+
+
+def test_blast_radius_sees_breadth_behind_a_role():
+    """One direct grant: v1 counted 1. Reach counts the role's five resources."""
+    f = blast_finding(wide_role(), "x")
+    assert f is not None
+    assert f.description.startswith("5 resources in standing reach, 1 CRITICAL")
+
+
+def test_blast_radius_ignores_a_jit_hop():
+    assert blast_finding(wide_role(first={"lifecycle": "jit_eligible"}), "x") is None
+
+
+def test_blast_radius_still_needs_a_crown_jewel():
+    assert blast_finding(wide_role(crown="high"), "x") is None
+
+
+def test_many_grants_on_one_resource_are_depth_not_breadth():
+    estate = est(
+        person("x"), res("db"),
+        *[grant(f"g{i}", "x", "db", a) for i, a in enumerate(("read", "write", "destroy", "admin"))],
+    )
+    assert blast_finding(estate, "x") is None
+
+
+def test_unclassified_reach_counts_as_breadth_but_not_score():
+    """Not privileged, not harmless."""
+    estate = est(
+        person("x"), res("jewel"), *[res(f"v{i}", sensitivity="high") for i in range(3)],
+        grant("g_j", "x", "jewel", "read"),
+        *[grant(f"g_v{i}", "x", f"v{i}", "vendorx.opaque") for i in range(3)],
+    )
+    f = blast_finding(estate, "x")
+    assert f is not None
+    assert "3 unclassified" in f.description and "blast radius 6.0" in f.description
+
+
+def test_impact_scales_with_the_score():
+    f = blast_finding(wide_role(), "x")
+    # jewel admin 30, three MEDIUM writes 1.5 each, impersonate (privileged) on the LOW role resource 1
+    score = 30.0 + 3 * 1.5 + 1.0
+    assert f.impact == pytest.approx(scoring.blast_impact(score))
+
+
+def test_blast_impact_is_bounded_and_anchored():
+    assert scoring.blast_impact(0.0) == 5.0
+    assert scoring.blast_impact(30.0) == pytest.approx(7.5)  # one crown jewel's worth
+    assert scoring.blast_impact(86.0) == pytest.approx(8.7, abs=0.05)
+    assert scoring.blast_impact(1e9) < 10.0
+    with pytest.raises(ValueError):
+        scoring.blast_impact(-1.0)
+
+
+def test_blast_radius_declines_without_a_reach():
+    estate = wide_role()
+    x = estate.identity("x")
+    ctx = RuleContext(
+        identity=x,
+        features=FeatureExtractor.extract_features(x, estate.resources, estate.events, ANCHOR),
+        coverage=CoverageAnalyzer.summarize(x, estate.events, estate, ANCHOR),
+        evaluation_time=ANCHOR,
+        resources=estate.resources,
+        index=estate,
+    )
+    assert not BLAST.evaluate(ctx).fired

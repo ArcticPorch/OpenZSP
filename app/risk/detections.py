@@ -27,6 +27,8 @@ from app.models.resource import ResourceType, Sensitivity
 from app.evidence.models import RecordKind
 from app.graph.effective import ReachTier
 from app.graph.graph import Edge, EdgeKind
+from app.risk import scoring
+from app.risk.blast_radius import STANDING as STANDING_CUT, blast_radius
 from app.risk.models import RiskFactorType, RiskSubject, RiskSubjectType
 from app.risk.rules import RuleContext, RuleOutcome
 from app.risk.scoring import confidence_from_coverage
@@ -81,7 +83,10 @@ REGRANT_WINDOW = timedelta(hours=1)
 ROLE_CHAIN_WINDOW = timedelta(hours=1)
 ROLE_CHAIN_MIN_HOPS = 3
 
-BLAST_RADIUS_MIN_GRANTS = 4
+# Blast radius: resources in standing reach (weighted, so UNKNOWN-only and
+# never-observed ones do not count), at least one of them CRITICAL. Breadth
+# gated on depth, as v1 -- but counted on reach, not grants.
+BLAST_RADIUS_MIN_RESOURCES = 4
 REAWAKENING_GAP_DAYS = 60.0
 REAWAKENING_MIN_RECENT = 10
 INTERACTIVE_LOGIN_THRESHOLD = 3
@@ -744,40 +749,76 @@ class PrivilegeCreep:
 
 class StandingBlastRadius:
     """
-    Broad standing access that reaches at least one crown jewel.
+    Broad standing reach that includes at least one crown jewel.
 
     Breadth is gated on depth deliberately. `read_only_analyst_wide_access` has
     six standing grants and should never fire: counting grants unweighted flags
     the entire analytics organisation, which is the fastest way to make a
     blast-radius metric worthless.
+
+    **v2 counts reach, not grants.** v1 counted standing grants, so it could
+    not see a role the identity steps into or the ledger its console governs,
+    and it counted four grants on *one* resource as breadth (yusuf). v2 reads
+    the standing cut of the blast-radius score: at least
+    `BLAST_RADIUS_MIN_RESOURCES` weighted resources, at least one CRITICAL.
+    The gate is v1's shape on purpose -- the raw score mixes depth and breadth
+    (one crown jewel alone is 30, above some genuine sprawl), and no TRAIN case
+    yet bounds a score threshold on both sides. The score does two other jobs:
+    it scales impact (`scoring.blast_impact`) and it explains the finding,
+    heaviest resources first. Declines without a reach.
+
+    Resources reached only through UNKNOWN capabilities count toward breadth
+    and toward "reaches a CRITICAL" but add nothing to the score: an opaque
+    grant is not privileged and not harmless. Coverage then decides whether
+    the finding can be trusted (yusuf: it cannot, and it is suppressed).
     """
 
-    rule_id = "standing_blast_radius.v1"
+    rule_id = "standing_blast_radius.v2"
     factor_type = RiskFactorType.EXCESSIVE_BLAST_RADIUS
 
+    SHOWN = 3
+
     def evaluate(self, ctx: RuleContext) -> RuleOutcome:
-        f = ctx.features
-        if f.standing_permission_count < BLAST_RADIUS_MIN_GRANTS:
+        if ctx.reach is None:
             return RuleOutcome.no_finding()
-        if f.standing_critical_permission_count < 1:
+        resources = {r.id: r for r in ctx.resources}
+        radius = blast_radius(ctx.reach, resources, STANDING_CUT)
+        unclassified = radius.unclassified_resources
+        breadth = len(radius.contributions) + len(unclassified)
+        if breadth < BLAST_RADIUS_MIN_RESOURCES:
+            return RuleOutcome.no_finding()
+        critical = radius.count_at(Sensitivity.CRITICAL) + sum(
+            1 for rid in unclassified if resources[rid].sensitivity is Sensitivity.CRITICAL
+        )
+        if critical < 1:
             return RuleOutcome.no_finding()
 
-        standing = [p for p in ctx.identity.permissions if p.is_standing]
+        shown = ", ".join(
+            f"{c.resource_id} {c.weight:.1f}" for c in radius.contributions[: self.SHOWN]
+        )
+        hidden = len(radius.contributions) - self.SHOWN
+        more = f" and {hidden} more" if hidden > 0 else ""
+        opaque = f", {len(unclassified)} unclassified" if unclassified else ""
+        paths = [c.path for c in radius.contributions] + [
+            e.path for e in ctx.reach.at_most(STANDING_CUT) if e.resource_id in unclassified
+        ]
         return RuleOutcome(
             fired=True,
             subject=_identity_subject(ctx),
-            impact=8.5,
+            impact=scoring.blast_impact(radius.score),
             likelihood=8.0,
             confidence=confidence_from_coverage(ctx.coverage),
             description=(
-                f"{f.standing_permission_count} standing grants spanning "
-                f"{f.standing_critical_permission_count} CRITICAL resource(s)."
+                f"{breadth} resources in standing reach{opaque}, {critical} "
+                f"CRITICAL (blast radius {radius.score:.1f}): {shown}{more}."
             ),
             recommendation=(
                 "Split into scoped roles; a single compromise currently reaches "
                 "every one of these resources."
             ),
-            evidence_ids=_cite_grants(ctx, [p.id for p in standing]),
+            evidence_ids=tuple(
+                dict.fromkeys(eid for path in paths for eid in _cite_path(ctx, path))
+            ),
         )
 
 

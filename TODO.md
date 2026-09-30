@@ -29,7 +29,7 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [x] Effective reach per identity: (resource, capability) set; standing / temporary / expired-attached / JIT-only
 - [x] `standing_permission_management.v2` on effective reach — closes structural miss gustav
 - [x] Blast-radius score from reachability (sensitivity × exposure weighted)
-- [ ] `standing_blast_radius.v2` on reachability, replacing grant count
+- [x] `standing_blast_radius.v2` on reachability, replacing grant count
 - [ ] Attack-path rule: low-privilege / external identity → CRITICAL in ≤ k hops
 - [ ] Choke points: edges that cut the most paths
 - [ ] Graph scenarios: multi-hop positives; traps (JIT hop, broken chain, LOW-only reach)
