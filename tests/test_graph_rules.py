@@ -1,24 +1,32 @@
 """
 Rules that read effective reach, and the engine wiring that gives it to them.
 
-`standing_permission_management.v2` extends v1 along the graph: it fires on a
-standing path whose last grant is explicit permission management and which
-ends on a HIGH+ resource -- directly, through a `governs` hop, or through a
-role stepped into on the way.
+* `standing_permission_management.v2` -- a standing path whose last grant is
+  explicit permission management, ending on a HIGH+ resource.
+* `standing_blast_radius.v2` -- breadth (resources in standing reach) gated on
+  depth (a CRITICAL among them); the score scales impact.
+* `attack_path_to_crown_jewel.v1` -- control of a CRITICAL resource held only
+  through an indirect live path, minus what permission management v2 reports.
 """
+
+from datetime import timedelta
 
 import pytest
 
 from app.evidence.models import RecordKind
 from app.graph.effective import effective_reach
 from app.graph.graph import IdentityGraph
-from app.risk import calibration, detections
+from app.risk import calibration, detections, scoring
 from app.risk.coverage import CoverageAnalyzer
-from app.risk.detections import StandingPermissionManagement
+from app.risk.detections import (
+    AttackPathToCrownJewel,
+    StandingBlastRadius,
+    StandingPermissionManagement,
+)
 from app.risk.engine import RiskEngine
 from app.risk.features import FeatureExtractor
 from app.risk.rules import RuleContext
-from tests.test_normalize import ANCHOR, normalize
+from tests.test_normalize import ANCHOR, identity_ev, normalize
 from tests.test_reach import grant, person, res, role
 
 RULE = StandingPermissionManagement()
@@ -158,9 +166,6 @@ def test_one_hop_limit_misses_gustav():
 
 # --- standing_blast_radius.v2 --------------------------------------------------
 
-from app.risk import scoring
-from app.risk.detections import StandingBlastRadius
-
 BLAST = StandingBlastRadius()
 
 
@@ -246,3 +251,122 @@ def test_blast_radius_declines_without_a_reach():
         index=estate,
     )
     assert not BLAST.evaluate(ctx).fired
+
+
+# --- attack_path_to_crown_jewel.v1 ---------------------------------------------
+
+PATH = AttackPathToCrownJewel()
+
+
+def path_finding(estate, who):
+    result = {r.identity_id: r for r in RiskEngine(rules=[PATH]).assess_estate(estate, ANCHOR)}[who]
+    found = result.assessment.triggered_factors + result.suppressed
+    return found[0] if found else None
+
+
+def chain(first=None, last="admin", crown=None, external=False, extra=()):
+    """x -impersonate-> r_res =becomes=> r -<last>-> jewel."""
+    return est(
+        identity_ev("x", payload={"is_external": external}),
+        role("r"), res("r_res", sensitivity="medium", principal_id="r"),
+        res("jewel", **(crown or {})),
+        grant("g_x", "x", "r_res", "impersonate", **(first or {})),
+        grant("g_r", "r", "jewel", last),
+        *extra,
+    )
+
+
+def test_attack_path_is_reported_with_its_route():
+    f = path_finding(chain(), "x")
+    assert "x -impersonate-> r_res =becomes=> r -admin-> jewel" in f.description
+    assert "in 2 hops (standing)" in f.description
+
+
+def test_a_jit_first_hop_breaks_the_path():
+    assert path_finding(chain(first={"lifecycle": "jit_eligible"}), "x") is None
+
+
+def test_an_expired_but_attached_hop_still_counts():
+    """A lingering expired grant usually means the revocation failed."""
+    expired = {"lifecycle": "time_bound", "expires_at": (ANCHOR - timedelta(days=3)).isoformat()}
+    f = path_finding(chain(first=expired), "x")
+    assert f is not None and "(expired_attached)" in f.description
+
+
+def test_only_crown_jewels_count():
+    assert path_finding(chain(crown={"sensitivity": "high"}), "x") is None
+
+
+def test_reading_a_database_is_not_control_but_reading_a_vault_is():
+    assert path_finding(chain(last="read"), "x") is None
+    vault = chain(last="read", crown={"resource_type": "secret_store"})
+    assert path_finding(vault, "x") is not None
+
+
+def test_targets_held_directly_belong_to_the_privilege_rules():
+    direct = chain(extra=(grant("g_x_direct", "x", "jewel", "admin"),))
+    assert path_finding(direct, "x") is None
+
+
+def test_an_admin_is_still_reported_for_a_different_crown_jewel():
+    """bob's case: direct admin on one jewel, a role path to another."""
+    estate = chain(extra=(res("own_jewel"), grant("g_x_own", "x", "own_jewel", "admin")))
+    f = path_finding(estate, "x")
+    assert f is not None and "-admin-> jewel" in f.description and "own_jewel" not in f.description
+
+
+def governs_path(**lifecycle):
+    return est(
+        person("x"), res("tool", sensitivity="medium", governs=["jewel"]), res("jewel"),
+        grant("g_tool", "x", "tool", "manage_permission", **lifecycle),
+    )
+
+
+def test_standing_permission_management_paths_are_left_to_v2():
+    """Same situation, one finding."""
+    assert path_finding(governs_path(), "x") is None
+    assert finding(governs_path(), "x") is not None  # standing_permission_management.v2
+
+
+def test_a_temporary_permission_management_path_is_an_attack_path():
+    """v2 only reports standing power, so this one is not double-counted."""
+    temp = governs_path(lifecycle="time_bound", expires_at=(ANCHOR + timedelta(days=5)).isoformat())
+    assert finding(temp, "x") is None
+    f = path_finding(temp, "x")
+    assert f is not None and "~governs~> jewel" in f.description
+
+
+def test_external_origin_raises_likelihood():
+    assert path_finding(chain(external=True), "x").likelihood > path_finding(chain(), "x").likelihood
+    assert path_finding(chain(external=True), "x").description.startswith("External principal")
+
+
+def test_the_finding_cites_every_hop():
+    estate = chain()
+    f = path_finding(estate, "x")
+    assert f.evidence_ids == (
+        estate.evidence_ids_for(RecordKind.PERMISSION_GRANT, "g_x")
+        + estate.evidence_ids_for(RecordKind.RESOURCE, "r_res")
+        + estate.evidence_ids_for(RecordKind.PERMISSION_GRANT, "g_r")
+    )
+
+
+def test_attack_path_declines_without_a_reach():
+    estate = chain()
+    x = estate.identity("x")
+    ctx = RuleContext(
+        identity=x,
+        features=FeatureExtractor.extract_features(x, estate.resources, estate.events, ANCHOR),
+        coverage=CoverageAnalyzer.summarize(x, estate.events, estate, ANCHOR),
+        evaluation_time=ANCHOR,
+        resources=estate.resources,
+        index=estate,
+    )
+    assert not PATH.evaluate(ctx).fired
+
+
+def test_attack_path_hop_limit_lower_edge_on_train():
+    """petra is two hops out; a one-hop limit cannot see any attack path at all."""
+    low, high = calibration.sweep("ATTACK_PATH_MAX_HOPS", [1, 2], ANCHOR)
+    assert "petra/PRIVILEGE_ESCALATION" in low.false_negatives
+    assert high.perfect

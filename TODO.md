@@ -13,7 +13,7 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [x] Evidence envelope, synthetic connector, normalizer, domain models
 - [x] Capability taxonomy, grant lifecycle, exposure
 - [x] Features, coverage, confidence-weighted scoring, suppression
-- [x] 19 detection rules across 7 factor types
+- [x] 19 detection rules across 7 factor types (20 with the attack-path rule)
 - [x] Peer baseline pre-pass (resource-centric)
 - [x] Per-identity baselines (dormancy rhythm, bulk-read history)
 - [x] Break-glass tag (excuses staleness, never privilege)
@@ -30,7 +30,7 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [x] `standing_permission_management.v2` on effective reach — closes structural miss gustav
 - [x] Blast-radius score from reachability (sensitivity × exposure weighted)
 - [x] `standing_blast_radius.v2` on reachability, replacing grant count
-- [ ] Attack-path rule: low-privilege / external identity → CRITICAL in ≤ k hops
+- [x] Attack-path rule: indirect path → control of CRITICAL in ≤ k hops (any origin, per target; petra/quinn pair)
 - [ ] Choke points: edges that cut the most paths
 - [ ] Graph scenarios: multi-hop positives; traps (JIT hop, broken chain, LOW-only reach)
 - [ ] Labels + TRAIN / FRESH split for graph scenarios

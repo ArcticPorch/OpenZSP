@@ -18,7 +18,7 @@ access worth converting.
   recall        100.0%    100.0%     100.0%
   specificity   100.0%     60.0%      77.8%
 
-  84 labelled scenarios · 134 labels (82 positive, 52 negative controls) · 19 rules · 352 tests
+  86 labelled scenarios · 136 labels (83 positive, 53 negative controls) · 20 rules · 364 tests
 ```
 
 > **Read these numbers carefully.** TRAIN is where thresholds are tuned, so its 100% is in-sample.
@@ -92,7 +92,7 @@ models/       a capability taxonomy: ~11 classes of harm instead of 10,000 cloud
      ↓
 risk/         features (what happened) + coverage (how much we saw)
               + one peer baseline (who else holds each resource)
-              → 19 rules → confidence floor → probabilistic aggregation
+              → 20 rules → confidence floor → probabilistic aggregation
      ↓
 evaluation    findings vs ground truth → precision / recall / specificity,
               on train / holdout / fresh; threshold sweeps on train only

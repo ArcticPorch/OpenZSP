@@ -25,7 +25,8 @@ from app.models.capability import (
 from app.models.permission import GrantLifecycle
 from app.models.resource import ResourceType, Sensitivity
 from app.evidence.models import RecordKind
-from app.graph.effective import ReachTier
+from app.graph.effective import ReachTier, grant_tier
+from app.graph.semantics import effective_capabilities
 from app.graph.graph import Edge, EdgeKind
 from app.risk import scoring
 from app.risk.blast_radius import STANDING as STANDING_CUT, blast_radius
@@ -122,6 +123,11 @@ BULK_READ_BASELINE_MULTIPLIER = 3.0
 # gustav needs 2, and no TRAIN case bounds it from above yet, so the plateau
 # is one-sided -- a guess until the graph scenarios add the other edge.
 REACH_MAX_HOPS = 4
+
+# Attack path: the longest indirect route to a crown jewel still reported.
+# PROVISIONAL like REACH_MAX_HOPS (and bounded by it): the TRAIN pair needs 2,
+# nothing bounds it from above until the graph scenarios add a long chain.
+ATTACK_PATH_MAX_HOPS = 4
 
 # Which event actions count as *exercising* a grant.
 #
@@ -266,6 +272,19 @@ def _cite_path(ctx: RuleContext, path: tuple[Edge, ...]) -> tuple[str, ...]:
         else:
             out.extend(ctx.cite(RecordKind.RESOURCE, edge.source.id))
     return tuple(dict.fromkeys(out))
+
+
+def _describe_path(origin: str, path: tuple[Edge, ...]) -> str:
+    """A path as a reader follows it: who, which grant, which step, where."""
+    out = [origin]
+    for edge in path:
+        if edge.kind is EdgeKind.GRANT:
+            out.append(f"-{edge.permission.action.value}-> {edge.target.id}")
+        elif edge.kind is EdgeKind.BECOMES:
+            out.append(f"=becomes=> {edge.target.id}")
+        else:
+            out.append(f"~governs~> {edge.target.id}")
+    return " ".join(out)
 
 
 def _last_grant(path: tuple[Edge, ...]) -> Optional[Edge]:
@@ -1125,6 +1144,112 @@ class RoleAssumptionChain:
 # --- EXTERNAL_EXPOSURE -----------------------------------------------------
 
 
+class AttackPathToCrownJewel:
+    """
+    Control of a crown jewel reachable only through someone or something else.
+
+    The identity holds no grant on the CRITICAL resource that would show up in
+    a permissions dump; it holds a grant on something *else* -- a role it can
+    step into, a control plane that governs the target -- and the chain ends
+    in control of the crown jewel. Every hop is individually authorised, which
+    is why no per-grant rule sees it. `role_assumption_chain` watches such a
+    chain being *walked* in events; this rule reports that it *exists*.
+
+    Scope, as decided with the user (2026-09-30):
+
+    * **Any indirect path** (2+ hops, up to `ATTACK_PATH_MAX_HOPS`) in the
+      *live* cut: standing, temporary, or expired-but-attached. A JIT hop
+      breaks it -- someone has to approve it.
+    * **Minus what `standing_permission_management.v2` already reports**: a
+      standing path whose last grant is explicit permission management. Same
+      situation, one finding.
+    * **Any origin, judged per target.** A target counts only if the identity
+      has no *live direct* grant controlling it; the privilege rules own those.
+      An admin who can also slip into a role controlling a different crown
+      jewel is reported for that jewel.
+    * **Control** means a privileged capability, or READ on a secret store.
+    * An external origin raises likelihood: the path starts outside the trust
+      boundary, and no resource-side check sees it.
+
+    One path per (resource, capability) is kept, so a target reachable both
+    through a governs route perm-mgmt v2 reports and through an equally short
+    role route may be reported only once, by v2. The finding exists either way.
+    """
+
+    rule_id = "attack_path_to_crown_jewel.v1"
+    factor_type = RiskFactorType.PRIVILEGE_ESCALATION
+
+    LIVE = ReachTier.EXPIRED_ATTACHED
+    PERMISSION_MANAGEMENT = PERMISSION_ALTERING_CAPABILITIES - {Capability.ADMIN}
+
+    @staticmethod
+    def _controls(capability: Capability, resource) -> bool:
+        if capability.is_privileged:
+            return True
+        return capability is Capability.READ and resource.resource_type is ResourceType.SECRET_STORE
+
+    def evaluate(self, ctx: RuleContext) -> RuleOutcome:
+        if ctx.reach is None:
+            return RuleOutcome.no_finding()
+
+        held_directly = set()
+        for perm in ctx.identity.permissions:
+            res = ctx.resource(perm.resource_id)
+            if res is None or grant_tier(perm, ctx.evaluation_time).rank > self.LIVE.rank:
+                continue
+            if any(self._controls(c, res) for c in effective_capabilities(perm.action)):
+                held_directly.add(perm.resource_id)
+
+        targets = {}  # resource id -> shortest qualifying entry
+        for entry in ctx.reach.at_most(self.LIVE):
+            if entry.resource_id in held_directly:
+                continue
+            if not 2 <= entry.hops <= ATTACK_PATH_MAX_HOPS:
+                continue
+            res = ctx.resource(entry.resource_id)
+            if res is None or res.sensitivity is not Sensitivity.CRITICAL:
+                continue
+            if not self._controls(entry.capability, res):
+                continue
+            last = _last_grant(entry.path)
+            if (
+                entry.tier is ReachTier.STANDING
+                and last is not None
+                and last.permission.action in self.PERMISSION_MANAGEMENT
+            ):
+                continue  # standing_permission_management.v2's finding
+            current = targets.get(entry.resource_id)
+            if current is None or (entry.hops, entry.tier.rank) < (current.hops, current.tier.rank):
+                targets[entry.resource_id] = entry
+
+        if not targets:
+            return RuleOutcome.no_finding()
+
+        ordered = sorted(targets.values(), key=lambda e: (e.hops, e.resource_id))
+        first = ordered[0]
+        others = f" (+{len(ordered) - 1} more)" if len(ordered) > 1 else ""
+        origin = "External principal" if ctx.identity.is_external else "Identity"
+        return RuleOutcome(
+            fired=True,
+            subject=_identity_subject(ctx),
+            impact=9.0,
+            likelihood=8.5 if ctx.identity.is_external else 7.0,
+            confidence=confidence_from_coverage(ctx.coverage),
+            description=(
+                f"{origin} controls {len(ordered)} CRITICAL resource(s) it holds no grant "
+                f"on, in {first.hops} hops ({first.tier.value}): "
+                f"{_describe_path(ctx.identity.id, first.path)}{others}."
+            ),
+            recommendation=(
+                "Break the chain at its cheapest link: make the first hop JIT-eligible, "
+                "or remove the intermediate principal's standing grant."
+            ),
+            evidence_ids=tuple(
+                dict.fromkeys(eid for e in ordered for eid in _cite_path(ctx, e.path))
+            ),
+        )
+
+
 class ExposedPrivilegedAccess:
     """
     Privileged access reachable from outside the trust boundary.
@@ -1297,6 +1422,7 @@ ALL_RULES: tuple = (
     EscalationAfterFailedAuth(),
     RevokeThenRegrant(),
     RoleAssumptionChain(),
+    AttackPathToCrownJewel(),
     ExposedPrivilegedAccess(),
     ServiceAccountInteractiveLogin(),
     PeerAccessOutlier(),

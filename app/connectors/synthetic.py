@@ -1570,6 +1570,72 @@ def _governed_low_value_only(b: EvidenceBuilder, rng: random.Random) -> list[Evi
     )
 
 
+def _contractor_via_support_role(
+    b: EvidenceBuilder,
+    identity_id: str,
+    name: str,
+    role: tuple[str, str, str],
+    crown: tuple[str, str],
+    lifecycle: str,
+) -> list[Evidence]:
+    """
+    An outsourced support agent who may step into a tier-2 support role, which
+    holds standing admin on a CRITICAL customer database. The agent holds
+    nothing on the database itself. Only the first hop's lifecycle varies.
+    """
+    role_res, role_res_name, role_id = role
+    crown_id, crown_name = crown
+    out = [
+        b.identity(identity_id, name, "human", "Outsourced Support", is_external=True),
+        b.resource(role_res, role_res_name, "cloud_account", "medium", principal_id=role_id),
+        b.identity(role_id, role_res_name, "role", "Customer Support"),
+        b.resource(crown_id, crown_name, "database", "critical"),
+        b.grant(f"g_{identity_id}_role", identity_id, role_res, "impersonate",
+                lifecycle=lifecycle, granted_at=b.ago(days=150)),
+        b.grant(f"g_{role_id}_admin", role_id, crown_id, "admin", granted_at=b.ago(days=600)),
+    ]
+    for i, day in enumerate(range(2, 40, 5)):
+        out.append(b.event(f"e_{identity_id}_assume_{i}", identity_id, role_res, "assume_role",
+                           b.ago(days=day, hours=4)))
+    return out
+
+
+def _external_path_to_crown_jewel(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Two hops from outside the trust boundary to a crown jewel.
+
+    Every check that reads grants one at a time reads clean: the contractor
+    holds only impersonate on a MEDIUM role resource, and the role is an
+    internal principal holding admin on its own team's database. Put together,
+    an outside contractor administers the customer database with no approval
+    anywhere on the way -- and exposure rules looking at the contractor's own
+    grants never see a CRITICAL resource at all.
+    """
+    return _contractor_via_support_role(
+        b, "petra", "Petra Novakova",
+        ("helpdesk_tier2_role", "Helpdesk Tier-2 Role", "role_helpdesk_tier2"),
+        ("support_crm_db", "Support CRM Database"),
+        lifecycle="standing",
+    )
+
+
+def _external_jit_path_to_crown_jewel(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: the same chain with the first hop JIT-eligible.
+
+    Pairs with `external_path_to_crown_jewel`; identical but for one lifecycle.
+    The path exists, but nobody walks it without an approval -- which is the
+    remediation of petra, and a rule that fires here reports no improvement
+    after the fix.
+    """
+    return _contractor_via_support_role(
+        b, "quinn", "Quinn Adebayo",
+        ("claims_tier2_role", "Claims Tier-2 Role", "role_claims_tier2"),
+        ("claims_crm_db", "Claims CRM Database"),
+        lifecycle="jit_eligible",
+    )
+
+
 def _unmapped_capability_grants(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
     """
     A source whose action vocabulary this taxonomy does not understand.
@@ -3304,6 +3370,35 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_governed_low_value_only,
+    ),
+    Scenario(
+        name="external_path_to_crown_jewel",
+        description="A contractor two hops from admin on a CRITICAL database, via a support role.",
+        expected=(
+            ExpectedFinding(
+                "PRIVILEGE_ESCALATION",
+                "petra",
+                "Standing impersonate onto a role that holds admin on the customer "
+                "database: an outside contractor controls a crown jewel she holds "
+                "no grant on, with no approval anywhere on the path.",
+            ),
+        ),
+        build=_external_path_to_crown_jewel,
+    ),
+    Scenario(
+        name="external_jit_path_to_crown_jewel",
+        description="Negative control: the same chain, first hop JIT-eligible.",
+        expected=(
+            ExpectedFinding(
+                "PRIVILEGE_ESCALATION",
+                "quinn",
+                "Same chain as petra, but stepping into the role needs an approved "
+                "request. That is what remediating petra looks like; firing here "
+                "would report no improvement after the fix.",
+                should_fire=False,
+            ),
+        ),
+        build=_external_jit_path_to_crown_jewel,
     ),
     Scenario(
         name="unmapped_capability_grants",
