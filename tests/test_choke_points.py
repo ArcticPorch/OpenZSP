@@ -117,7 +117,21 @@ def test_corpus_choke_points_are_deterministic():
     first = find_choke_points(estate, ANCHOR)
     assert first == find_choke_points(estate, ANCHOR)
     assert {r.pair for r in first.routes} == {
+        ("adaeze", "claims_payment_db"),
+        ("bruno", "claims_payment_db"),
+        ("chiara", "claims_payment_db"),
         ("gustav", "treasury_payments_ledger"),
         ("petra", "support_crm_db"),
+        ("teodor", "fleet_telemetry_db"),
+        ("vesna", "subscriber_billing_db"),
+        ("xenia", "payroll_ledger"),
     }
-    assert "g_role_helpdesk_tier2_admin" in {p.edge_id for p in first.choke_points}
+    assert first.uncut == ()
+
+
+def test_the_shared_adjuster_role_tops_the_corpus_ranking():
+    """Three contractors, one role: tightening the role is the one change that closes three routes."""
+    estate = Normalizer().normalize(SyntheticConnector(anchor_time=ANCHOR).collect())
+    top = find_choke_points(estate, ANCHOR).choke_points[:2]
+    assert [p.edge_id for p in top] == ["becomes:adjuster_role", "g_role_adjuster_payments"]
+    assert all(len(p.cuts) == 3 for p in top)

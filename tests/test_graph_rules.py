@@ -152,16 +152,17 @@ def test_single_identity_assessment_walks_what_it_honestly_can():
 # --- The corpus -------------------------------------------------------------------
 
 
-def test_one_hop_limit_misses_gustav():
+def test_walk_bound_lower_edge_on_train():
     """
-    The hop limit's lower edge on TRAIN: gustav's ledger is two hops away.
-    There is no upper edge yet -- REACH_MAX_HOPS is provisional until the
-    graph scenarios bound it from above.
+    REACH_MAX_HOPS is a compute bound, not a detection threshold: it needs only
+    a lower edge. gustav's ledger is two hops away; vesna's six. Every value
+    from six up gets TRAIN right, and the bound sits above that.
     """
-    low, high = calibration.sweep("REACH_MAX_HOPS", [1, 2], ANCHOR)
-    assert "gustav/EXCESSIVE_PRIVILEGE" in low.false_negatives
-    assert high.perfect
-    assert detections.REACH_MAX_HOPS >= 2
+    one, five, six = calibration.sweep("REACH_MAX_HOPS", [1, 5, 6], ANCHOR)
+    assert "gustav/EXCESSIVE_PRIVILEGE" in one.false_negatives
+    assert "vesna/PRIVILEGE_ESCALATION" in five.false_negatives
+    assert six.perfect
+    assert detections.REACH_MAX_HOPS >= 6
 
 
 # --- standing_blast_radius.v2 --------------------------------------------------
@@ -365,8 +366,19 @@ def test_attack_path_declines_without_a_reach():
     assert not PATH.evaluate(ctx).fired
 
 
-def test_attack_path_hop_limit_lower_edge_on_train():
-    """petra is two hops out; a one-hop limit cannot see any attack path at all."""
-    low, high = calibration.sweep("ATTACK_PATH_MAX_HOPS", [1, 2], ANCHOR)
-    assert "petra/PRIVILEGE_ESCALATION" in low.false_negatives
-    assert high.perfect
+def test_attack_path_bound_lower_edge_on_train():
+    """petra is two hops out, teodor three, vesna six: the bound must reach six."""
+    one, five, six = calibration.sweep("ATTACK_PATH_MAX_HOPS", [1, 5, 6], ANCHOR)
+    assert "petra/PRIVILEGE_ESCALATION" in one.false_negatives
+    assert "vesna/PRIVILEGE_ESCALATION" in five.false_negatives
+    assert "teodor/PRIVILEGE_ESCALATION" not in five.false_negatives
+    assert six.perfect
+    assert detections.ATTACK_PATH_MAX_HOPS >= 6
+
+
+def test_likelihood_falls_with_every_hop_but_stays_a_finding():
+    """A long chain is less certain, not harmless."""
+    lik = [scoring.attack_path_likelihood(h, external=False) for h in (2, 3, 4, 6)]
+    assert lik == pytest.approx([7.0, 6.3, 5.6, 4.2])
+    assert scoring.attack_path_likelihood(2, external=True) == pytest.approx(8.5)
+    assert scoring.attack_path_likelihood(50, external=False) == scoring.ATTACK_PATH_LIKELIHOOD_FLOOR

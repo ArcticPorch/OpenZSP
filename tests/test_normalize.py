@@ -301,7 +301,10 @@ def test_normalizes_the_full_scenario_set_cleanly():
     labelled = {f.subject_id for f in connector.expected_findings()}
     assert labelled <= {i.id for i in estate.identities}
     assert estate.events
-    assert all(i.permissions for i in estate.identities)
+    # Everyone holds something -- except a role at the end of a broken chain,
+    # whose emptiness is the point of `broken_chain`.
+    empty = {i.id for i in estate.identities if not i.permissions}
+    assert empty == {"role_yard_ops"}
 
 
 def test_every_grant_is_citable_end_to_end():

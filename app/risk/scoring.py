@@ -79,6 +79,15 @@ BLAST_READ_FACTOR = 0.2
 # Anchored, not calibrated -- no label depends on impact.
 BLAST_IMPACT_HALF_SCORE = 30.0
 
+# Attack-path likelihood: highest for a two-hop path, lower for every hop
+# after, never below the floor. Each extra hop is another condition this model
+# cannot evaluate, so a long chain is less certain -- not harmless. Anchored,
+# not calibrated: no label depends on likelihood.
+ATTACK_PATH_BASE_LIKELIHOOD = 7.0
+ATTACK_PATH_EXTERNAL_LIKELIHOOD = 8.5
+ATTACK_PATH_HOP_DECAY = 0.7
+ATTACK_PATH_LIKELIHOOD_FLOOR = 2.0
+
 ENGINE_VERSION = "0.1.0"
 RULE_VERSION = "2026.09.29"
 
@@ -226,6 +235,11 @@ def blast_impact(score: float) -> float:
     """
     validate_numeric(score, "score", 0.0, float("inf"))
     return 5.0 + 5.0 * score / (score + BLAST_IMPACT_HALF_SCORE)
+
+
+def attack_path_likelihood(hops: int, external: bool) -> float:
+    base = ATTACK_PATH_EXTERNAL_LIKELIHOOD if external else ATTACK_PATH_BASE_LIKELIHOOD
+    return max(ATTACK_PATH_LIKELIHOOD_FLOOR, base - ATTACK_PATH_HOP_DECAY * max(0, hops - 2))
 
 
 def is_reportable(confidence: float) -> bool:

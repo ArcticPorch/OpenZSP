@@ -120,15 +120,15 @@ BULK_READ_MIN = 50
 BULK_READ_BASELINE_MULTIPLIER = 3.0
 
 # How far the engine walks the graph for each identity (a hop is one grant or
-# governs edge; stepping into a role is free). PROVISIONAL and uncalibrated:
-# gustav needs 2, and no TRAIN case bounds it from above yet, so the plateau
-# is one-sided -- a guess until the graph scenarios add the other edge.
-REACH_MAX_HOPS = 4
-
-# Attack path: the longest indirect route to a crown jewel still reported.
-# PROVISIONAL like REACH_MAX_HOPS (and bounded by it): the TRAIN pair needs 2,
-# nothing bounds it from above until the graph scenarios add a long chain.
-ATTACK_PATH_MAX_HOPS = 4
+# governs edge; stepping into a role is free), and the longest route the
+# attack-path rule considers. **Compute bounds, not detection thresholds**
+# (decided 2026-10-01): a long chain to a crown jewel is still a path, so it
+# is reported with lower likelihood (`scoring.ATTACK_PATH_HOP_DECAY`) rather
+# than declared harmless at some length nobody could defend. They need only a
+# lower edge -- gustav and petra are two hops out, vesna six -- and are set
+# well above it so no plausible chain is cut off.
+REACH_MAX_HOPS = 8
+ATTACK_PATH_MAX_HOPS = 8
 
 # Which event actions count as *exercising* a grant.
 #
@@ -1224,6 +1224,9 @@ class AttackPathToCrownJewel:
     * **Control** means a privileged capability, or READ on a secret store.
     * An external origin raises likelihood: the path starts outside the trust
       boundary, and no resource-side check sees it.
+    * Every hop past two lowers likelihood: each is another condition (MFA,
+      session policy, source IP) this model does not evaluate, so a long chain
+      is less certain to work end to end -- but it is still reported.
 
     One path per (resource, capability) is kept, so a target reachable both
     through a governs route perm-mgmt v2 reports and through an equally short
@@ -1263,7 +1266,7 @@ class AttackPathToCrownJewel:
             fired=True,
             subject=_identity_subject(ctx),
             impact=9.0,
-            likelihood=8.5 if ctx.identity.is_external else 7.0,
+            likelihood=scoring.attack_path_likelihood(first.hops, ctx.identity.is_external),
             confidence=confidence_from_coverage(ctx.coverage),
             description=(
                 f"{origin} controls {len(ordered)} CRITICAL resource(s) it holds no grant "

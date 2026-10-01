@@ -1636,6 +1636,263 @@ def _external_jit_path_to_crown_jewel(b: EvidenceBuilder, rng: random.Random) ->
     )
 
 
+def _role_chain(
+    b: EvidenceBuilder,
+    who: tuple[str, str, str],
+    links: tuple[tuple[str, str, str], ...],
+    final: tuple[tuple[str, str, str, str, str], ...],
+    *,
+    external: bool = False,
+) -> list[Evidence]:
+    """
+    who -impersonate-> links[0] =becomes=> role0 -impersonate-> links[1] ... ->
+    the last role, which holds `final`. Every role resource is MEDIUM and every
+    hop is standing. An empty `final` is a broken chain: the last role holds
+    nothing. The identity steps into its first role every five days, so no
+    staleness rule has anything to say.
+
+    links: (role resource id, its name, role principal id)
+    final: (resource id, name, resource type, sensitivity, action)
+    """
+    who_id, who_name, dept = who
+    out = [b.identity(who_id, who_name, "human", dept, is_external=external)]
+    for res_id, res_name, role_id in links:
+        out.append(b.resource(res_id, res_name, "cloud_account", "medium", principal_id=role_id))
+        out.append(b.identity(role_id, res_name, "role", dept))
+    out.append(b.grant(f"g_{who_id}_hop0", who_id, links[0][0], "impersonate",
+                       granted_at=b.ago(days=240)))
+    for (_, _, role_id), (next_res, _, _) in zip(links, links[1:]):
+        out.append(b.grant(f"g_{role_id}_next", role_id, next_res, "impersonate",
+                           granted_at=b.ago(days=500)))
+    last_role = links[-1][2]
+    for res_id, res_name, rtype, sensitivity, action in final:
+        out.append(b.resource(res_id, res_name, rtype, sensitivity))
+        out.append(b.grant(f"g_{last_role}_{res_id}", last_role, res_id, action,
+                           granted_at=b.ago(days=500)))
+    for i, day in enumerate(range(1, 45, 5)):
+        out.append(b.event(f"e_{who_id}_assume_{i}", who_id, links[0][0], "assume_role",
+                           b.ago(days=day, hours=2)))
+    return out
+
+
+def _three_hop_chain(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Three hops to a crown jewel through two roles nobody would flag alone.
+
+    A logistics analyst may become the route-planning role; route planning may
+    become fleet operations; fleet operations administers the telemetry
+    database. No grant on the way is privileged on anything above MEDIUM.
+    """
+    return _role_chain(
+        b, ("teodor", "Teodor Ilic", "Logistics Analytics"),
+        (("route_planner_role", "Route Planner Role", "role_route_planner"),
+         ("fleet_ops_role", "Fleet Ops Role", "role_fleet_ops")),
+        (("fleet_telemetry_db", "Fleet Telemetry DB", "database", "critical", "admin"),),
+    )
+
+
+def _broken_chain(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: the same chain, with the last role's grant revoked.
+
+    Pairs with `three_hop_chain`. Two role hops still exist and still look like
+    a path; the role at the end holds nothing, so there is nowhere to go. A
+    rule that fires on "can assume roles that can assume roles" fires here.
+    """
+    return _role_chain(
+        b, ("ulrike", "Ulrike Brandt", "Warehouse Analytics"),
+        (("slotting_role", "Slotting Planner Role", "role_slotting"),
+         ("yard_ops_role", "Yard Ops Role", "role_yard_ops")),
+        (),
+    )
+
+
+_SIX_LINKS = (
+    ("ingest", "Ingest"), ("transcode", "Transcode"), ("packaging", "Packaging"),
+    ("cdn_config", "CDN Config"), ("rights_mgmt", "Rights Management"),
+)
+
+
+def _long_chain(b: EvidenceBuilder, who, prefix: str, crown) -> list[Evidence]:
+    """Five media-pipeline roles in a row, the last holding `crown`: six hops."""
+    links = tuple(
+        (f"{prefix}_{key}_role", f"{label} Role ({prefix})", f"role_{prefix}_{key}")
+        for key, label in _SIX_LINKS
+    )
+    return _role_chain(b, who, links, (crown,))
+
+
+def _six_hop_chain(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Six hops to a crown jewel: still a finding, with lower likelihood.
+
+    A broadcast engineer reaches the subscriber billing database through five
+    media-pipeline roles. Each hop is another condition this model does not
+    evaluate, so the chain is less certain to work -- which lowers likelihood
+    and does not make it harmless.
+    """
+    return _long_chain(
+        b, ("vesna", "Vesna Horvat", "Broadcast Engineering"), "bcast",
+        ("subscriber_billing_db", "Subscriber Billing DB", "database", "critical", "admin"),
+    )
+
+
+def _six_hop_chain_to_high(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: the same six-hop chain, ending on a HIGH resource.
+
+    Pairs with `six_hop_chain`. The attack-path rule is about crown jewels; a
+    long road to something merely important is not the same finding.
+    """
+    return _long_chain(
+        b, ("wilhelm", "Wilhelm Sauer", "Studio Engineering"), "studio",
+        ("ad_insertion_db", "Ad Insertion DB", "database", "high", "admin"),
+    )
+
+
+def _governed_role(b: EvidenceBuilder, who, console, role, final) -> list[Evidence]:
+    """`who` manages a console's permissions; the console governs a role's resource."""
+    who_id, who_name, dept = who
+    console_id, console_name = console
+    role_res, role_res_name, role_id = role
+    out = [
+        b.identity(who_id, who_name, "human", dept),
+        b.resource(console_id, console_name, "api", "medium", governs=(role_res,)),
+        b.resource(role_res, role_res_name, "cloud_account", "medium", principal_id=role_id),
+        b.identity(role_id, role_res_name, "role", dept),
+        b.grant(f"g_{who_id}_console", who_id, console_id, "manage_permission",
+                granted_at=b.ago(days=300)),
+    ]
+    for res_id, res_name, sensitivity, action in final:
+        out.append(b.resource(res_id, res_name, "database", sensitivity))
+        out.append(b.grant(f"g_{role_id}_{res_id}", role_id, res_id, action,
+                           granted_at=b.ago(days=600)))
+    for i, day in enumerate(range(2, 50, 6)):
+        out.append(b.event(f"e_{who_id}_grant_{i}", who_id, console_id, "grant_permission",
+                           b.ago(days=day, hours=5)))
+    return out
+
+
+def _governed_role_to_crown_jewel(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Become a role by rewriting its trust, with no grant on the role anywhere.
+
+    An HR-systems admin manages the permissions of an access console that
+    governs the payroll-admin role. Whoever can edit that role's trust policy
+    can become it, and the role administers the payroll ledger. The last grant
+    on the path is the role's admin, so this is an attack path rather than the
+    permission-management finding gustav gets.
+    """
+    return _governed_role(
+        b, ("xenia", "Xenia Papadakis", "HR Systems"),
+        ("hr_access_console", "HR Access Console"),
+        ("payroll_admin_role", "Payroll Admin Role", "role_payroll_admin"),
+        (("payroll_ledger", "Payroll Ledger", "critical", "admin"),),
+    )
+
+
+def _governed_role_to_low_only(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: the same governed role, reaching only LOW resources.
+
+    Pairs with `governed_role_to_crown_jewel`; only what the role holds differs.
+    """
+    return _governed_role(
+        b, ("yannick", "Yannick Moreau", "Facilities Systems"),
+        ("facilities_access_console", "Facilities Access Console"),
+        ("room_booking_role", "Room Booking Role", "role_room_booking"),
+        (("room_bookings", "Room Bookings", "low", "admin"),),
+    )
+
+
+def _wide_role_service(b: EvidenceBuilder, who, link, resources) -> list[Evidence]:
+    """A service with one impersonate grant onto a role that writes to `resources`."""
+    who_id, who_name = who
+    res_id, res_name, role_id = link
+    out = [
+        b.identity(who_id, who_name, "service", "Business Intelligence"),
+        b.resource(res_id, res_name, "cloud_account", "low", principal_id=role_id),
+        b.identity(role_id, res_name, "role", "Business Intelligence"),
+        b.grant(f"g_{who_id}_role", who_id, res_id, "impersonate", granted_at=b.ago(days=400)),
+    ]
+    for rid, rname, sensitivity, action in resources:
+        out.append(b.resource(rid, rname, "database", sensitivity))
+        out.append(b.grant(f"g_{role_id}_{rid}", role_id, rid, action, granted_at=b.ago(days=400)))
+    for i, day in enumerate(range(0, 30, 2)):
+        out.append(b.event(f"e_{who_id}_assume_{i}", who_id, res_id, "assume_role",
+                           b.ago(days=day, hours=1)))
+    return out
+
+
+def _role_hidden_sprawl(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    One grant, five systems, one of them a crown jewel.
+
+    A report-building service holds a single impersonate grant. The role behind
+    it writes to five databases, including the CRITICAL revenue ledger. Grant
+    counting sees one grant; reach sees six resources. The CRITICAL grant is
+    write, not admin, so this is breadth -- not an attack path to control.
+    """
+    return _wide_role_service(
+        b, ("svc_report_builder", "report-builder"),
+        ("reporting_role", "Reporting Role", "role_reporting"),
+        (("revenue_ledger", "Revenue Ledger", "critical", "write"),
+         ("orders_mart", "Orders Mart", "medium", "write"),
+         ("returns_mart", "Returns Mart", "medium", "write"),
+         ("inventory_mart", "Inventory Mart", "medium", "write"),
+         ("pricing_mart", "Pricing Mart", "medium", "write")),
+    )
+
+
+def _role_hidden_breadth_no_crown_jewel(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: the same shape, every resource MEDIUM.
+
+    Pairs with `role_hidden_sprawl`. Breadth without depth is not a blast
+    radius worth paging anyone about -- the read-only analyst's lesson, one
+    role deep.
+    """
+    return _wide_role_service(
+        b, ("svc_dashboard_builder", "dashboard-builder"),
+        ("dashboard_role", "Dashboard Role", "role_dashboard"),
+        (("web_traffic_mart", "Web Traffic Mart", "medium", "write"),
+         ("campaign_mart", "Campaign Mart", "medium", "write"),
+         ("survey_mart", "Survey Mart", "medium", "write"),
+         ("support_mart", "Support Mart", "medium", "write"),
+         ("newsletter_mart", "Newsletter Mart", "medium", "write")),
+    )
+
+
+_ADJUSTERS = (("adaeze", "Adaeze Okonkwo"), ("bruno", "Bruno Ferreira"), ("chiara", "Chiara Russo"))
+
+
+def _shared_contractor_role(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Three outside claims adjusters, one role, one crown jewel.
+
+    Each contractor's route is the same two hops through a shared role that
+    administers the claims-payment database. Revoking each contractor's hop is
+    three changes; tightening the role is one. This is what choke-point
+    ranking exists to say.
+    """
+    out = [
+        b.resource("adjuster_role", "Adjuster Role", "cloud_account", "medium",
+                   principal_id="role_adjuster"),
+        b.identity("role_adjuster", "Adjuster Role", "role", "Claims"),
+        b.resource("claims_payment_db", "Claims Payment DB", "database", "critical"),
+        b.grant("g_role_adjuster_payments", "role_adjuster", "claims_payment_db", "admin",
+                granted_at=b.ago(days=700)),
+    ]
+    for who_id, who_name in _ADJUSTERS:
+        out.append(b.identity(who_id, who_name, "human", "Outsourced Claims", is_external=True))
+        out.append(b.grant(f"g_{who_id}_adjuster", who_id, "adjuster_role", "impersonate",
+                           granted_at=b.ago(days=90)))
+        for i, day in enumerate(range(1, 30, 4)):
+            out.append(b.event(f"e_{who_id}_assume_{i}", who_id, "adjuster_role", "assume_role",
+                               b.ago(days=day, hours=3)))
+    return out
+
+
 def _unmapped_capability_grants(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
     """
     A source whose action vocabulary this taxonomy does not understand.
@@ -3399,6 +3656,150 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_external_jit_path_to_crown_jewel,
+    ),
+    Scenario(
+        name="three_hop_chain",
+        description="Three hops through two unremarkable roles to admin on a crown jewel.",
+        expected=(
+            ExpectedFinding(
+                "PRIVILEGE_ESCALATION",
+                "teodor",
+                "Route planning may become fleet ops, which administers the "
+                "CRITICAL telemetry database: control of a crown jewel he holds "
+                "no grant on, three standing hops away.",
+            ),
+        ),
+        build=_three_hop_chain,
+    ),
+    Scenario(
+        name="broken_chain",
+        description="Negative control: the same chain, the last role holding nothing.",
+        expected=(
+            ExpectedFinding(
+                "PRIVILEGE_ESCALATION",
+                "ulrike",
+                "Two role hops that lead nowhere: the role at the end holds no "
+                "grants. A rule firing on the ability to assume roles alone fires here.",
+                should_fire=False,
+            ),
+        ),
+        build=_broken_chain,
+    ),
+    Scenario(
+        name="six_hop_chain",
+        description="Six hops to a crown jewel: reported, with lower likelihood.",
+        expected=(
+            ExpectedFinding(
+                "PRIVILEGE_ESCALATION",
+                "vesna",
+                "Five media-pipeline roles end in admin on subscriber billing. "
+                "Long, so less certain to work end to end -- still a path to "
+                "a crown jewel.",
+            ),
+            ExpectedFinding(
+                "EXCESSIVE_BLAST_RADIUS",
+                "vesna",
+                "Compromise of this identity reaches five roles and a CRITICAL "
+                "database through standing grants: broad reach with a crown "
+                "jewel in it, although she holds a single grant herself.",
+            ),
+        ),
+        build=_six_hop_chain,
+    ),
+    Scenario(
+        name="six_hop_chain_to_high",
+        description="Negative control: the same six-hop chain, ending on HIGH.",
+        expected=(
+            ExpectedFinding(
+                "PRIVILEGE_ESCALATION",
+                "wilhelm",
+                "Same chain as vesna, ending at a HIGH ad-insertion database. "
+                "Attack paths are about crown jewels.",
+                should_fire=False,
+            ),
+        ),
+        build=_six_hop_chain_to_high,
+    ),
+    Scenario(
+        name="governed_role_to_crown_jewel",
+        description="Manage a console that governs a role; the role administers payroll.",
+        expected=(
+            ExpectedFinding(
+                "PRIVILEGE_ESCALATION",
+                "xenia",
+                "Permission management over the console that governs the "
+                "payroll-admin role: she can rewrite its trust and become it, "
+                "and the role administers the CRITICAL payroll ledger.",
+            ),
+        ),
+        build=_governed_role_to_crown_jewel,
+    ),
+    Scenario(
+        name="governed_role_to_low_only",
+        description="Negative control: the same governed role, reaching only LOW.",
+        expected=(
+            ExpectedFinding(
+                "PRIVILEGE_ESCALATION",
+                "yannick",
+                "Same shape as xenia; the role administers room bookings. "
+                "Becoming a role that controls nothing valuable is not "
+                "escalation worth reporting.",
+                should_fire=False,
+            ),
+        ),
+        build=_governed_role_to_low_only,
+    ),
+    Scenario(
+        name="role_hidden_sprawl",
+        description="One impersonate grant onto a role that writes to five databases, one CRITICAL.",
+        expected=(
+            ExpectedFinding(
+                "EXCESSIVE_BLAST_RADIUS",
+                "svc_report_builder",
+                "A single grant hides six reachable resources, one of them the "
+                "CRITICAL revenue ledger. Grant counting sees one.",
+            ),
+        ),
+        build=_role_hidden_sprawl,
+    ),
+    Scenario(
+        name="role_hidden_breadth_no_crown_jewel",
+        description="Negative control: the same shape, every resource MEDIUM.",
+        expected=(
+            ExpectedFinding(
+                "EXCESSIVE_BLAST_RADIUS",
+                "svc_dashboard_builder",
+                "Same breadth as svc_report_builder with no crown jewel in it. "
+                "Breadth without depth does not fire.",
+                should_fire=False,
+            ),
+        ),
+        build=_role_hidden_breadth_no_crown_jewel,
+    ),
+    Scenario(
+        name="shared_contractor_role",
+        description="Three outside adjusters share one role that administers a crown jewel.",
+        expected=(
+            ExpectedFinding(
+                "PRIVILEGE_ESCALATION",
+                "adaeze",
+                "An outside adjuster two standing hops from admin on the CRITICAL "
+                "claims-payment database, through a role two other contractors share.",
+            ),
+            ExpectedFinding(
+                "PRIVILEGE_ESCALATION",
+                "bruno",
+                "An outside adjuster two standing hops from admin on the CRITICAL "
+                "claims-payment database, through a role two other contractors share.",
+            ),
+            ExpectedFinding(
+                "PRIVILEGE_ESCALATION",
+                "chiara",
+                "An outside adjuster two standing hops from admin on the CRITICAL "
+                "claims-payment database, through a role two other contractors share.",
+            ),
+        ),
+        build=_shared_contractor_role,
     ),
     Scenario(
         name="unmapped_capability_grants",
