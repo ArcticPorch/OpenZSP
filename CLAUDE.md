@@ -49,6 +49,7 @@ app/risk/coverage.py   CoverageAnalyzer → CoverageSummary    (how much we saw)
 app/risk/rules.py      Rule protocol, RuleContext, RuleOutcome (the contract)
 app/risk/blast_radius.py blast_radius(reach, resources, cut) → weighted sum over reach, per-resource shares
 app/risk/choke_points.py find_choke_points(estate, at) → links whose removal cuts the most crown-jewel routes
+app/risk/graph_report.py format_paths / format_blast_radius — CLI text; formats only what the rules compute
 app/risk/baselines.py  PeerBaseline — the one cross-identity pre-pass, built once per estate
 app/risk/detections.py 20 concrete rules across all 7 factor types
       ↓
@@ -70,6 +71,8 @@ app/risk/calibration.py threshold sweeps, TRAIN only
 ./venv/Scripts/python.exe -m app.main --fresh     # fresh detail -- read once per cycle
 ./venv/Scripts/python.exe -m app.main --findings  # per-identity assessments
 ./venv/Scripts/python.exe -m app.main --sweep CADENCE_TOLERANCE=1.0,1.25,1.5   # TRAIN-only curve
+./venv/Scripts/python.exe -m app.main --paths petra    # one identity: routes, roles, blast radius by cut
+./venv/Scripts/python.exe -m app.main --blast-radius   # ranked standing blast radius + choke points
 ```
 
 The pipeline is connected end to end — `test_pipeline_reaches_feature_extraction` runs connector → normalizer → features with no hand-built fixtures. `app/risk/models.py` defines the *output* contract the unwritten layers must produce (`RiskAssessment`, `RiskFactorAssessment`, `RiskSubject`).

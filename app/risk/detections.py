@@ -29,6 +29,7 @@ from app.evidence.models import RecordKind
 from app.graph.effective import EffectiveReach, ReachTier, TieredReach, grant_tier
 from app.graph.semantics import effective_capabilities
 from app.graph.graph import Edge, EdgeKind
+from app.graph.reach import describe_path
 from app.risk import scoring
 from app.risk.blast_radius import STANDING as STANDING_CUT, blast_radius
 from app.risk.models import RiskFactorType, RiskSubject, RiskSubjectType
@@ -273,19 +274,6 @@ def _cite_path(ctx: RuleContext, path: tuple[Edge, ...]) -> tuple[str, ...]:
         else:
             out.extend(ctx.cite(RecordKind.RESOURCE, edge.source.id))
     return tuple(dict.fromkeys(out))
-
-
-def _describe_path(origin: str, path: tuple[Edge, ...]) -> str:
-    """A path as a reader follows it: who, which grant, which step, where."""
-    out = [origin]
-    for edge in path:
-        if edge.kind is EdgeKind.GRANT:
-            out.append(f"-{edge.permission.action.value}-> {edge.target.id}")
-        elif edge.kind is EdgeKind.BECOMES:
-            out.append(f"=becomes=> {edge.target.id}")
-        else:
-            out.append(f"~governs~> {edge.target.id}")
-    return " ".join(out)
 
 
 def _last_grant(path: tuple[Edge, ...]) -> Optional[Edge]:
@@ -1278,7 +1266,7 @@ class AttackPathToCrownJewel:
             description=(
                 f"{origin} controls {len(ordered)} CRITICAL resource(s) it holds no grant "
                 f"on, in {first.hops} hops ({first.tier.value}): "
-                f"{_describe_path(ctx.identity.id, first.path)}{others}."
+                f"{describe_path(ctx.identity.id, first.path)}{others}."
             ),
             recommendation=(
                 "Break the chain at its cheapest link: make the first hop JIT-eligible, "

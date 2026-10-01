@@ -9,6 +9,8 @@ CLI entry point: run the pipeline over the labelled corpus and report quality.
     ./venv/Scripts/python.exe -m app.main --findings  # per-identity assessments
     ./venv/Scripts/python.exe -m app.main --sweep NAME=v1,v2,...   # TRAIN only
     ./venv/Scripts/python.exe -m app.main --curves docs/tuning_curves.svg  # README chart
+    ./venv/Scripts/python.exe -m app.main --paths petra   # one identity's routes and reach
+    ./venv/Scripts/python.exe -m app.main --blast-radius  # ranked reach + choke points
 """
 
 import sys
@@ -26,7 +28,7 @@ ANCHOR = datetime(2026, 9, 9, 0, 0, 0, tzinfo=timezone.utc)
 
 
 def show_findings() -> None:
-    estate = Normalizer().normalize(SyntheticConnector(anchor_time=ANCHOR).collect())
+    estate = _estate()
     results = RiskEngine().assess_estate(estate, ANCHOR)
     for result in sorted(results, key=lambda r: -r.assessment.overall_score):
         a = result.assessment
@@ -64,6 +66,28 @@ def run_sweep(spec: str) -> None:
     print(calibration.format_sweep(name, calibration.sweep(name, values, ANCHOR), current))
 
 
+def _estate():
+    return Normalizer().normalize(SyntheticConnector(anchor_time=ANCHOR).collect())
+
+
+def show_paths(identity_id: str) -> int:
+    from app.risk.graph_report import format_paths
+
+    try:
+        print(format_paths(_estate(), identity_id, ANCHOR))
+    except KeyError:
+        print(f"unknown identity {identity_id!r}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def show_blast_radius() -> int:
+    from app.risk.graph_report import format_blast_radius
+
+    print(format_blast_radius(_estate(), ANCHOR))
+    return 0
+
+
 def write_curves(path: str) -> None:
     """Render the TRAIN-only tuning curves to an SVG file (used by the README)."""
     from pathlib import Path
@@ -77,7 +101,14 @@ def write_curves(path: str) -> None:
 
 
 def main() -> int:
-    if "--curves" in sys.argv:
+    if "--paths" in sys.argv:
+        idx = sys.argv.index("--paths")
+        if idx + 1 >= len(sys.argv):
+            raise SystemExit("usage: --paths <identity>")
+        return show_paths(sys.argv[idx + 1])
+    elif "--blast-radius" in sys.argv:
+        return show_blast_radius()
+    elif "--curves" in sys.argv:
         idx = sys.argv.index("--curves")
         write_curves(sys.argv[idx + 1] if idx + 1 < len(sys.argv) else "docs/tuning_curves.svg")
     elif "--sweep" in sys.argv:

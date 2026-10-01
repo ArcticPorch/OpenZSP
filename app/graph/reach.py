@@ -70,6 +70,23 @@ def hops(path: tuple[Edge, ...]) -> int:
     return sum(1 for edge in path if edge.kind is not EdgeKind.BECOMES)
 
 
+def describe_path(origin: str, path: tuple[Edge, ...]) -> str:
+    """
+    A path as a reader follows it: who, which grant, which step, where.
+
+        petra -impersonate-> helpdesk_tier2_role =becomes=> role_helpdesk_tier2 -admin-> support_crm_db
+    """
+    out = [origin]
+    for edge in path:
+        if edge.kind is EdgeKind.GRANT:
+            out.append(f"-{edge.permission.action.value}-> {edge.target.id}")
+        elif edge.kind is EdgeKind.BECOMES:
+            out.append(f"=becomes=> {edge.target.id}")
+        else:
+            out.append(f"~governs~> {edge.target.id}")
+    return " ".join(out)
+
+
 @dataclass(frozen=True)
 class Reached:
     """A (resource, capability) the origin can get to, and the path that gets there."""

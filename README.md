@@ -18,7 +18,7 @@ access worth converting.
   recall         98.2%    100.0%     100.0%      93.8%
   specificity   100.0%     60.0%      77.8%      78.6%
 
-  114 labelled scenarios · 182 labels (107 positive, 75 negative controls) · 20 rules · 379 tests
+  114 labelled scenarios · 182 labels (107 positive, 75 negative controls) · 20 rules · 387 tests
 ```
 
 > **Read these numbers carefully.** TRAIN is where thresholds are tuned, so it is in-sample; its one
@@ -137,6 +137,8 @@ python -m app.main               # train vs holdout vs fresh detection quality
 python -m app.main --full        # whole-corpus report, including misses
 python -m app.main --findings    # every identity's assessment, explained
 python -m app.main --sweep CADENCE_TOLERANCE=1.0,1.25,1.5   # a tuning curve, TRAIN only
+python -m app.main --paths petra    # one identity's routes to crown jewels, as readable chains
+python -m app.main --blast-radius   # identities ranked by reach, then the choke points
 ```
 
 Run everything from the repository root.
