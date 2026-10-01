@@ -5,8 +5,9 @@
 OpenZSP looks at who can do what in an environment — humans, service accounts and AI agents — and
 finds the access that makes a breach worse: dormant admin rights, over-broad service accounts,
 permission-granting power held permanently, credential-stuffing bursts followed by escalation.
-Every finding explains itself, cites the evidence that produced it, and states how much that
-evidence can be trusted.
+It also follows access *through* roles and control planes, so it can show what a compromise would
+actually reach, not just what an identity holds directly. Every finding explains itself, cites the
+evidence that produced it, and states how much that evidence can be trusted.
 
 The name comes from **Zero Standing Privilege**: the idea that nobody should hold dangerous access
 by default, and should instead request it just-in-time. The engine's job is to find the standing
@@ -18,7 +19,7 @@ access worth converting.
   recall         98.2%    100.0%     100.0%      93.8%
   specificity   100.0%     60.0%      77.8%      78.6%
 
-  114 labelled scenarios · 182 labels (107 positive, 75 negative controls) · 20 rules · 396 tests
+  114 labelled scenarios · 182 labels (107 positive, 75 negative controls) · 20 rules · 397 tests
 ```
 
 > **Read these numbers carefully.** TRAIN is where thresholds are tuned, so it is in-sample; its one
@@ -67,6 +68,39 @@ fire, but the engine refuses to report them as if they were trustworthy. It reco
 **coverage gap**. Without that separation, carol would be reported either as a confident risk or as
 clean — and a system that says "all clear" at the moment it goes blind is the most dangerous kind.
 
+## Attack paths and blast radius
+
+A permissions dump answers "what does this identity hold?". An attacker asks "what can I *become*?".
+OpenZSP models the estate as a graph: a grant leads to a resource, and a role's resource leads to
+the role itself, which holds grants of its own. A control plane leads to everything it governs.
+Walking that graph finds access no single grant shows:
+
+```
+$ python -m app.main --paths petra
+Routes to crown jewels it holds no grant on (1):
+  support_crm_db  [admin, 2 hops, standing]
+    petra -impersonate-> helpdesk_tier2_role =becomes=> role_helpdesk_tier2 -admin-> support_crm_db
+```
+
+petra is an outside contractor. She holds one grant, `impersonate` on a MEDIUM role, and every check
+that reads grants one at a time finds nothing to report. The path is the finding, and it is also the
+explanation.
+
+- **Reach comes in tiers.** A path is only as easy as its hardest step: always-on, temporary,
+  expired-but-still-attached, or needing a just-in-time approval. One JIT hop means somebody has to
+  approve the path, so it is not standing access.
+- **Blast radius is a sum, not a count.** Each reachable system is weighted by sensitivity ×
+  exposure × what you can do there, so six read grants on dashboards don't rank like admin on
+  production. The role resources a chain passes through are stepping-stones, not extra systems.
+- **Choke points are verified, not guessed.** `--blast-radius` lists the single links whose removal
+  closes the most routes to crown jewels. Each candidate is removed and the graph is walked again,
+  so a link with a bypass never shows up as the fix:
+
+```
+$ python -m app.main --blast-radius
+  becomes:adjuster_role       becomes  cuts 3: adaeze -> claims_payment_db, bruno -> ..., chiara -> ...
+```
+
 ## Tuning curves
 
 Every threshold was calibrated against the training split only. Each panel sweeps one threshold
@@ -96,9 +130,12 @@ normalize/    evidence → identities, grants, resources, events (never drops ac
      ↓
 models/       a capability taxonomy: ~11 classes of harm instead of 10,000 cloud actions
      ↓
+graph/        identities, roles and resources as a graph; reach in four tiers, one path each
+     ↓
 risk/         features (what happened) + coverage (how much we saw)
-              + one peer baseline (who else holds each resource)
+              + peer baseline (who else holds each resource) + each identity's reach
               → 20 rules → confidence floor → probabilistic aggregation
+              + blast radius and choke points (remediation, not findings)
      ↓
 evaluation    findings vs ground truth → precision / recall / specificity,
               on train / holdout / fresh; threshold sweeps on train only
@@ -119,7 +156,8 @@ A few design decisions that shape the rest:
   read in a year. Dormancy and bulk-read rules compare an identity to its *own* history, and
   context rules compare it to the other holders of the same resource.
 - **Deterministic and cited.** No wall clock, no unseeded randomness, content-addressed evidence
-  IDs. The same input always produces the same output, and every finding points at its evidence.
+  IDs. The same input always produces the same output, even across processes with different hash
+  seeds, and every finding points at its evidence, hop by hop for a path.
 
 ## Quick start
 
@@ -132,7 +170,7 @@ python -m venv venv
 # Windows: venv\Scripts\activate      macOS/Linux: source venv/bin/activate
 pip install pytest
 
-python -m pytest -q              # run the 230 tests
+python -m pytest -q              # run the test suite
 python -m app.main               # train vs holdout vs fresh detection quality
 python -m app.main --full        # whole-corpus report, including misses
 python -m app.main --findings    # every identity's assessment, explained
@@ -150,9 +188,11 @@ each design decision and the conventions the tests enforce.
 
 ## Status
 
-This is a research and learning project focused on detection engineering and calibration, with
-identity attack-path and blast-radius analysis next. It runs on synthetic, labelled data; there is
-no connector to a real cloud provider yet.
+This is a research and learning project in two parts, both measured against labelled data:
+detection engineering with calibration, and identity attack paths with blast radius. The next
+calibration cycle adds a rule for grants that were used and then abandoned, which is the gap the
+latest held-out set exposed. Everything runs on synthetic data; there is no connector to a real
+cloud provider yet.
 
 ## License
 

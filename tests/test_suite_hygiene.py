@@ -29,3 +29,21 @@ def test_no_test_module_defines_a_test_twice():
         if repeated:
             duplicates[path.name] = repeated
     assert duplicates == {}
+
+
+def test_graph_layer_imports_only_downward():
+    """
+    app/graph/ sits between models and risk, and stays interpretation-free:
+    it never imports the risk layer, the normalizer or a connector. Judgements
+    about sensitivity, crown jewels and findings live in app/risk/.
+    """
+    graph = TESTS.parent / "app" / "graph"
+    upward = ("app.risk", "app.normalize", "app.connectors")
+    offenders = []
+    for path in sorted(graph.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith(upward):
+                offenders.append((path.name, node.module))
+            elif isinstance(node, ast.Import):
+                offenders += [(path.name, a.name) for a in node.names if a.name.startswith(upward)]
+    assert offenders == []

@@ -40,7 +40,7 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [x] TRAIN case for a grant used, then abandoned (FRESH v3 miss shape): marisol / nikolai — marisol a structural miss
 - [x] CLI: `--paths <identity>`, `--blast-radius` (app/risk/graph_report.py)
 - [x] Tests: graph build, reachability, path explanation, determinism — audit; fixed a shadowed test; corpus properties; hash-seed determinism
-- [ ] Update README + CLAUDE.md
+- [x] Update README + CLAUDE.md — graph phase wrap-up
 - [ ] Next cycle: abandoned-grant rule (a grant's last use against its own rhythm) — closes marisol
 
 ## Detection & calibration — parked

@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Start here
 
 1. **Read `TODO.md`.** It is the working plan. Work proceeds item by item in its order; tick each item (`- [x]`) in the same commit that completes it, and add new items there rather than anywhere else.
-2. **Current phase: graph connectivity & blast radius** (TODO "Next"). Detection & calibration is finished; its parked items stay parked unless the user asks. **JIT access is out of scope** for this project.
+2. **The graph connectivity & blast radius phase is complete** (2026-10-01): roles as principals, the graph, effective reach, blast radius, attack paths, choke points, a code-blind FRESH v3, and the CLI. The one open "Next" item is the abandoned-grant rule, which opens the next calibration cycle (it needs a FRESH v4). Detection & calibration's parked items stay parked unless the user asks. **JIT access is out of scope** for this project.
 3. **Two personal guides sit in the repo root but are gitignored** (`*Learning_Guide*.md`; details in the gitignored `CLAUDE.local.md`). Never commit them (no `git add -f`), link them from tracked files, or rename them out of the ignore pattern:
    - the original **learning guide** — frozen 2026-09-29. Never read it for tasks, never edit it.
    - the **graph learning guide** — the user's notes for this phase. **Update it whenever a graph item in `TODO.md` is completed**: fill that item's section with a few simple lines (what was built → why this way → the one thing to remember) and add a one-line entry to its decisions log for any design choice. Plain language, no code dumps; it is for understanding the architecture, not a spec. `TODO.md` stays the to-do list.
@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Python 3.14 with a local venv at `venv/` (Windows). Pytest is the only third-party dependency (there is no `requirements.txt`, `pyproject.toml`, or `pytest.ini` — pytest picks up `tests/` via rootdir defaults, and imports resolve because `app/` and `tests/` both have `__init__.py`). Run everything from the repo root. The commands below work in Git Bash; in PowerShell/cmd use `venv\Scripts\python.exe`.
 
 ```bash
-./venv/Scripts/python.exe -m pytest -q           # full suite (~30 s)
+./venv/Scripts/python.exe -m pytest -q           # full suite (~1–2 min)
 ./venv/Scripts/python.exe -m pytest -q tests/test_features.py
 ./venv/Scripts/python.exe -m pytest -q tests/test_features.py::test_permissions_extraction
 ./venv/Scripts/python.exe -m app.main            # train vs holdout vs fresh
@@ -79,7 +79,7 @@ The pipeline is connected end to end — `test_pipeline_reaches_feature_extracti
 
 ### Layer dependency rule
 
-`app/common/validation.py` → `app/evidence/` → `app/models/` → `app/risk/`. The arrow never points backwards. `Evidence` and `EvidenceQuality` live in `app/evidence/`, **not** in `app/risk/models.py`, because source reliability and integrity are ingestion concerns. `app/connectors/synthetic.py` refers to risk factor types as plain strings rather than importing `RiskFactorType`, to keep ingestion free of a risk dependency; a test asserts those strings are valid enum values.
+`app/common/validation.py` → `app/evidence/` → `app/models/` → `app/graph/` → `app/risk/`. The arrow never points backwards: `app/graph/` imports only models (and validation), and is interpretation-free — sensitivity weights, crown jewels and what counts as a finding live in `app/risk/`. `Evidence` and `EvidenceQuality` live in `app/evidence/`, **not** in `app/risk/models.py`, because source reliability and integrity are ingestion concerns. `app/connectors/synthetic.py` refers to risk factor types as plain strings rather than importing `RiskFactorType`, to keep ingestion free of a risk dependency; a test asserts those strings are valid enum values.
 
 ### Evidence layer
 
@@ -96,7 +96,7 @@ The pipeline is connected end to end — `test_pipeline_reaches_feature_extracti
 
 `SyntheticConnector` is a real connector, not a stub, and is the peer of any future AWS reader. Its data is **scenario-driven**: each `Scenario` carries `ExpectedFinding` ground truth, so the generator doubles as a labelled test set for measuring detection. `should_fire=False` marks a negative control (e.g. `active_admin_justified`) — "did not fire" is a tested outcome.
 
-The corpus is **95 scenarios / 148 labels, 91 positive and 57 negative**, sized so a single miss moves recall by ~4 points rather than ~12. `tests/test_corpus.py` enforces that: minimum positive count, a negative-control share between 20% and 50%, and both polarities per factor type. Negative controls are not optional decoration — a rule that fires unconditionally scores perfect recall on an all-positive set, so they are the only thing that makes precision computable.
+The corpus is **114 scenarios / 182 labels, 107 positive and 75 negative**, sized so a single miss moves recall by ~4 points rather than ~12. `tests/test_corpus.py` enforces that: minimum positive count, a negative-control share between 20% and 50%, and both polarities per factor type. Negative controls are not optional decoration — a rule that fires unconditionally scores perfect recall on an all-positive set, so they are the only thing that makes precision computable.
 
 Several scenarios exist as **discriminating pairs**: two identities that are identical in `IdentityFeatures` and differ only in something a naive rule ignores. `burst_then_escalation` vs `failed_logins_spread_thin` (both `failed_authentication_count == 12`, one is 18/hour and one is 0.4/day). `dormant_standing_admin` vs `recently_granted_not_yet_used` (feature-identical; only `granted_at` differs, 420 days vs 2). `service_account_sprawl` vs `read_only_analyst_wide_access` (both 6 standing grants; admin-on-production vs read-on-dashboards). `active_admin_justified` vs `admin_on_medium_internal_tool` (bob vs ines: same standing admin, same usage; CRITICAL vs MEDIUM resource — the TRAIN-side trap on the privilege rule's sensitivity line). `stale_connector_blind_spot` vs `incomplete_but_fresh_collection` (a connector that stopped vs one that only ever saw half). The 2026-09-29 pairs each turn on context outside the feature vector: `agent_ops` vs `agent_intake` (same five grants; a month apart vs one afternoon), `otto` vs `pablo` (standing read on CRITICAL; secret store vs database), `svc_quarterly_recon` vs `svc_semiannual_audit` (silence judged against the identity's own rhythm), `ravi` vs `svc_nightly_etl` (80 reads in 40 minutes; first time vs every night), `oscar` vs `sonia` (who else holds the resource), `gustav` vs `hanna` (permission management on a MEDIUM tool; it governs a CRITICAL ledger vs only LOW resources), `petra` vs `quinn` (external contractor → support role → admin on a CRITICAL database; standing vs JIT-eligible first hop), `marisol` vs `nikolai` (a HIGH write grant, holder active daily; abandoned after a year of weekly use vs used every quarter, 75 days in). The 2026-10-01 graph pairs: `teodor` vs `ulrike` (three-hop role chain; the last role holds nothing — broken chain), `vesna` vs `wilhelm` (six-hop chain; CRITICAL vs HIGH at the end), `xenia` vs `yannick` (manage a console that governs a role; the role administers a CRITICAL ledger vs LOW only), `svc_report_builder` vs `svc_dashboard_builder` (one grant onto a role writing to five databases; one CRITICAL vs none). `shared_contractor_role` (adaeze, bruno, chiara) has three positives through one role, which gives choke-point ranking something to rank. irene / kwame / rahul keep their role-shaped resources with no principal behind them — left as they are by decision (2026-10-01). Keep these pairs feature-identical — if one drifts apart it silently stops testing anything.
 
@@ -124,7 +124,7 @@ Scoring is **rules carrying their own confidence**, aggregated probabilistically
 
 ### Detection quality, and the three splits
 
-`Scenario.split` is `TRAIN` (53 scenarios, 87 labels), `HOLDOUT` (27 scenarios, 39 labels) or `FRESH` (15 scenarios, 22 labels). Membership is **declared per scenario, never shuffled**: a random split would move every run, so a metric could improve purely because the seed changed and yesterday's number would be unreproducible.
+`Scenario.split` is `TRAIN` (55 scenarios, 91 labels), `HOLDOUT` (42 scenarios, 61 labels) or `FRESH` (17 scenarios, 30 labels). Membership is **declared per scenario, never shuffled**: a random split would move every run, so a metric could improve purely because the seed changed and yesterday's number would be unreproducible.
 
 - **TRAIN** — tune here, freely.
 - **HOLDOUT** — contaminated. The original held-out half (written with the rules visible) plus every *retired* FRESH set. Never quote it. It grows each cycle; that is expected.
