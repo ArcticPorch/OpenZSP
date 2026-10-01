@@ -39,7 +39,7 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [x] Triage the 6 unlabelled FRESH v3 firings — 3 TP, 3 traps; triaged reading 83.3% / 93.8% / 78.6%; vesna relabelled, blast radius v3 (stepping-stones not counted)
 - [x] TRAIN case for a grant used, then abandoned (FRESH v3 miss shape): marisol / nikolai — marisol a structural miss
 - [x] CLI: `--paths <identity>`, `--blast-radius` (app/risk/graph_report.py)
-- [ ] Tests: graph build, reachability, path explanation, determinism
+- [x] Tests: graph build, reachability, path explanation, determinism — audit; fixed a shadowed test; corpus properties; hash-seed determinism
 - [ ] Update README + CLAUDE.md
 - [ ] Next cycle: abandoned-grant rule (a grant's last use against its own rhythm) — closes marisol
 

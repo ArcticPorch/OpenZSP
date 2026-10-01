@@ -71,7 +71,7 @@ def test_fires_on_permission_management_reached_through_a_role():
     assert "indirectly (db)" in f.description
 
 
-def test_the_finding_cites_every_hop():
+def test_permission_management_finding_cites_every_hop():
     estate = via_role()
     f = finding(estate, "x")
     expected = (
@@ -342,7 +342,7 @@ def test_external_origin_raises_likelihood():
     assert path_finding(chain(external=True), "x").description.startswith("External principal")
 
 
-def test_the_finding_cites_every_hop():
+def test_attack_path_finding_cites_every_hop():
     estate = chain()
     f = path_finding(estate, "x")
     assert f.evidence_ids == (

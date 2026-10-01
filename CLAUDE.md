@@ -260,6 +260,8 @@ Both fields are **optional in the payload with quiet defaults** (`INTERNAL`, `Fa
 - **Missing resources degrade silently.** A permission or event referencing an unknown `resource_id` is counted in totals but never counted as critical — do not raise.
 - **DTOs across `app/evidence/` and `app/risk/` are frozen dataclasses that self-validate in `__post_init__`,** using the shared helpers in `app/common/validation.py`. Collections are tuples (not lists/dicts) so instances stay hashable and immutable. Validation raises `TypeError` for wrong types and `ValueError` for out-of-range/empty/non-finite values — tests assert on that specific distinction. `bool` is explicitly rejected where a number is expected, and NaN/inf are rejected.
 - **Score ranges:** `impact`/`likelihood` 0–10, all confidence and evidence-quality fields 0–1, `overall_score` and dimension scores 0–100.
+- **Determinism holds across processes, not just within one.** Python randomises string hashing per process, so a set's iteration order leaking into a path, a tie-break or a report would only show between runs. `test_output_does_not_depend_on_the_hash_seed` runs the engine and the graph reports under two `PYTHONHASHSEED`s and demands identical output. Sort before you emit.
+- **No test module may define a test name twice** (`test_suite_hygiene.py`): Python keeps only the last, and the first silently never runs. It happened once — permission management v2's citation test was shadowed for two commits.
 
 ### The capability taxonomy
 
