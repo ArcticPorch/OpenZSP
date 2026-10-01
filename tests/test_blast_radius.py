@@ -82,9 +82,23 @@ def test_reach_through_a_role_counts():
         person("a"), role("r"), res("r_res", sensitivity="low", principal_id="r"), res("db"),
         grant("g_a", "a", "r_res", "impersonate"), grant("g_r", "r", "db"),
     )
-    assert [c.resource_id for c in b.contributions] == ["db", "r_res"]
+    assert [c.resource_id for c in b.contributions] == ["db"]
     assert b.contributions[0].hops == 2
-    assert b.score == pytest.approx(30.0 + 1.0)
+    assert b.score == pytest.approx(30.0)
+
+
+def test_stepping_stones_are_listed_not_counted():
+    """
+    The role's resource is the door into the role; what the role reaches is
+    already counted through its grants. Counting the door too made one long
+    chain read as breadth (vesna, kai).
+    """
+    b = br(
+        person("a"), role("r"), res("r_res", principal_id="r"), res("db"),
+        grant("g_a", "a", "r_res", "admin"), grant("g_r", "r", "db", "read"),
+    )
+    assert b.stepping_stones == ("r_res",)
+    assert [c.resource_id for c in b.contributions] == ["db"]
 
 
 def test_breadth_adds_and_crown_jewels_dominate():

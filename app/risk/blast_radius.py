@@ -27,6 +27,12 @@ defend; asking the question at three cuts invents none.
 observed) or reached only through UNKNOWN capabilities contributes 0 and is
 listed, the same convention as everywhere else: counted, never called
 critical, and left to coverage to turn into lower confidence.
+
+**Stepping-stones are listed, not counted** (decided 2026-10-01). A resource
+that is also a principal (`Resource.principal_id`) is the door into a role; what
+the role can reach is already counted through the role's own grants. Counting
+the door as one more system double-counts every chain, so a single six-hop
+chain to one crown jewel read as six-system breadth.
 """
 
 from dataclasses import dataclass
@@ -94,6 +100,8 @@ class BlastRadius:
     unknown_resources: tuple[str, ...]
     # Reached only through capabilities we could not classify: weight 0.
     unclassified_resources: tuple[str, ...]
+    # Role resources walked through on the way: their reach is the role's.
+    stepping_stones: tuple[str, ...] = ()
 
     @property
     def score(self) -> float:
@@ -124,12 +132,16 @@ def blast_radius(
 
     best: dict[str, Contribution] = {}
     unknown: set[str] = set()
+    stones: set[str] = set()
     seen_with_weight: set[str] = set()
     reached: set[str] = set()
 
     for entry in reach.at_most(cut):
-        reached.add(entry.resource_id)
         resource = resources.get(entry.resource_id)
+        if resource is not None and resource.is_assumable:
+            stones.add(entry.resource_id)
+            continue
+        reached.add(entry.resource_id)
         if resource is None:
             unknown.add(entry.resource_id)
             continue
@@ -153,6 +165,7 @@ def blast_radius(
         contributions=tuple(sorted(best.values(), key=lambda c: (-c.weight, c.resource_id))),
         unknown_resources=tuple(sorted(unknown)),
         unclassified_resources=tuple(sorted(reached - unknown - seen_with_weight)),
+        stepping_stones=tuple(sorted(stones)),
     )
 
 

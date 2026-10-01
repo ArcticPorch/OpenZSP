@@ -190,10 +190,10 @@ def wide_role(first=None, crown="critical"):
 
 
 def test_blast_radius_sees_breadth_behind_a_role():
-    """One direct grant: v1 counted 1. Reach counts the role's five resources."""
+    """One direct grant: v1 counted 1. Reach counts the four systems behind the role."""
     f = blast_finding(wide_role(), "x")
     assert f is not None
-    assert f.description.startswith("5 resources in standing reach, 1 CRITICAL")
+    assert f.description.startswith("4 resources in standing reach, 1 CRITICAL")
 
 
 def test_blast_radius_ignores_a_jit_hop():
@@ -226,8 +226,8 @@ def test_unclassified_reach_counts_as_breadth_but_not_score():
 
 def test_impact_scales_with_the_score():
     f = blast_finding(wide_role(), "x")
-    # jewel admin 30, three MEDIUM writes 1.5 each, impersonate (privileged) on the LOW role resource 1
-    score = 30.0 + 3 * 1.5 + 1.0
+    # jewel admin 30, three MEDIUM writes 1.5 each; the role resource is a stepping-stone
+    score = 30.0 + 3 * 1.5
     assert f.impact == pytest.approx(scoring.blast_impact(score))
 
 

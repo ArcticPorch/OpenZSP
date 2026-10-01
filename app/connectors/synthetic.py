@@ -1893,6 +1893,71 @@ def _shared_contractor_role(b: EvidenceBuilder, rng: random.Random) -> list[Evid
     return out
 
 
+def _grant_on_a_rhythm(
+    b: EvidenceBuilder,
+    who: tuple[str, str, str],
+    grant: tuple[str, str],
+    use_days_ago: tuple[int, ...],
+    elsewhere: tuple[str, str],
+) -> list[Evidence]:
+    """
+    A HIGH write grant used on the given days, and daily activity elsewhere, so
+    the identity is never dormant and the grant is never "never used". Only the
+    rhythm of the grant's use differs between the pair.
+    """
+    who_id, who_name, dept = who
+    res_id, res_name = grant
+    other_id, other_name = elsewhere
+    out = [
+        b.identity(who_id, who_name, "human", dept),
+        b.resource(res_id, res_name, "database", "high"),
+        b.resource(other_id, other_name, "api", "low"),
+        b.grant(f"g_{who_id}_{res_id}", who_id, res_id, "write", granted_at=b.ago(days=800)),
+        b.grant(f"g_{who_id}_{other_id}", who_id, other_id, "read", granted_at=b.ago(days=800)),
+    ]
+    for i, day in enumerate(use_days_ago):
+        out.append(b.event(f"e_{who_id}_use_{i}", who_id, res_id, "write", b.ago(days=day, hours=10)))
+    for day in range(0, 60):
+        out.append(b.event(f"e_{who_id}_daily_{day}", who_id, other_id, "read",
+                           b.ago(days=day, hours=9)))
+    return out
+
+
+def _abandoned_grant(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Used every week for a year, then abandoned when its holder changed teams.
+
+    A pricing analyst tuned promotions weekly until she moved to the growth
+    team 230 days ago. She is active every day, and the grant was used
+    hundreds of times, so neither "dormant identity" nor "never-used grant"
+    applies -- yet the write grant on the pricing engine has outlived its
+    reason by most of a year. The shape FRESH v3's amara exposed (2026-10-01),
+    written in a different domain.
+    """
+    return _grant_on_a_rhythm(
+        b, ("marisol", "Marisol Vega", "Growth"),
+        ("promo_pricing_engine", "Promotional Pricing Engine"),
+        tuple(range(230, 600, 7)),
+        ("growth_experiments_dash", "Growth Experiments Dashboard"),
+    )
+
+
+def _quarterly_grant_mid_cycle(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: a grant used once a quarter, 75 days into its quarter.
+
+    Pairs with `abandoned_grant`. A tax analyst updates the rate tables every
+    quarter; 75 days of quiet is normal for that grant. A rule that reads "not
+    used lately" without the grant's own rhythm fires here.
+    """
+    return _grant_on_a_rhythm(
+        b, ("nikolai", "Nikolai Petrov", "Indirect Tax"),
+        ("tax_rate_tables", "Sales Tax Rate Tables"),
+        (75, 166, 257, 348, 439, 530, 621, 712),
+        ("storefront_cms", "Storefront CMS"),
+    )
+
+
 def _unmapped_capability_grants(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
     """
     A source whose action vocabulary this taxonomy does not understand.
@@ -3709,9 +3774,12 @@ SCENARIOS: tuple[Scenario, ...] = (
             ExpectedFinding(
                 "EXCESSIVE_BLAST_RADIUS",
                 "vesna",
-                "Compromise of this identity reaches five roles and a CRITICAL "
-                "database through standing grants: broad reach with a crown "
-                "jewel in it, although she holds a single grant herself.",
+                "Relabelled on meaning (user, 2026-10-01): one chain to one crown "
+                "jewel is depth, not breadth. The five role resources are "
+                "stepping-stones whose reach is already counted through the "
+                "roles' grants. Was positive; the FRESH v3 triage of kai, the same "
+                "shape, exposed the contradiction with teodor/xenia.",
+                should_fire=False,
             ),
         ),
         build=_six_hop_chain,
@@ -3817,6 +3885,34 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_shared_contractor_role,
+    ),
+    Scenario(
+        name="abandoned_grant",
+        description="A write grant used weekly for a year, then abandoned 230 days ago; holder active daily.",
+        expected=(
+            ExpectedFinding(
+                "STALE_ACCESS",
+                "marisol",
+                "Standing write on a HIGH pricing engine, unused for 230 days after a "
+                "year of weekly use: the reason for it ended when she changed teams. "
+                "Active daily elsewhere, so only the grant is stale.",
+            ),
+        ),
+        build=_abandoned_grant,
+    ),
+    Scenario(
+        name="quarterly_grant_mid_cycle",
+        description="Negative control: a quarterly grant, 75 days into its quarter.",
+        expected=(
+            ExpectedFinding(
+                "STALE_ACCESS",
+                "nikolai",
+                "Used every quarter for two years; 75 days of quiet is its rhythm, "
+                "not abandonment.",
+                should_fire=False,
+            ),
+        ),
+        build=_quarterly_grant_mid_cycle,
     ),
     Scenario(
         name="unmapped_capability_grants",

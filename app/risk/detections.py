@@ -791,9 +791,16 @@ class StandingBlastRadius:
     and toward "reaches a CRITICAL" but add nothing to the score: an opaque
     grant is not privileged and not harmless. Coverage then decides whether
     the finding can be trusted (yusuf: it cannot, and it is suppressed).
+
+    **v3 does not count stepping-stones** (`BlastRadius.stepping_stones`): a role
+    resource is the door into a role whose reach is already counted through its
+    grants. v2 counted the doors, so one long chain to one crown jewel read as
+    breadth (vesna: six "resources", one of them a system). Decided on meaning
+    by the user on 2026-10-01, when triaging FRESH v3's kai -- the same shape --
+    exposed the contradiction with teodor/xenia. Built and checked on TRAIN.
     """
 
-    rule_id = "standing_blast_radius.v2"
+    rule_id = "standing_blast_radius.v3"
     factor_type = RiskFactorType.EXCESSIVE_BLAST_RADIUS
 
     SHOWN = 3

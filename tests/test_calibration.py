@@ -160,12 +160,13 @@ def test_cycle_two_values_are_the_only_or_middle_all_correct_ones():
     assert detections.PEER_MAX_SAME_DEPT_SHARE == 0.1
 
 
-def test_blast_radius_gate_is_exactly_four():
+def test_blast_radius_gate_plateau():
     """
-    Graph cycle (2026-10-01): bounded below by teodor/xenia (one chain to one
-    crown jewel is depth, not breadth -- user's labelling decision) and above
-    by agent_triage's four-resource sprawl. The only all-correct value.
+    Graph cycle (2026-10-01). With stepping-stones no longer counted (v3), the
+    all-correct range is 3..4: xenia (console + ledger) fires at 2, and
+    agent_triage's four-resource sprawl is missed at 5. On an integer plateau
+    the criterion keeps the value that requires more evidence: 4.
     """
-    points = calibration.sweep("BLAST_RADIUS_MIN_RESOURCES", [3, 4, 5], ANCHOR)
-    assert [p.perfect for p in points] == [False, True, False]
+    points = calibration.sweep("BLAST_RADIUS_MIN_RESOURCES", [2, 3, 4, 5], ANCHOR)
+    assert [p.perfect for p in points] == [False, True, True, False]
     assert detections.BLAST_RADIUS_MIN_RESOURCES == 4

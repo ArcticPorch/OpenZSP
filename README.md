@@ -14,15 +14,15 @@ access worth converting.
 
 ```
                  train   fresh v1   fresh v2   fresh v3
-  precision     100.0%     76.5%      86.7%     100.0%*
-  recall        100.0%    100.0%     100.0%      92.3%
-  specificity   100.0%     60.0%      77.8%     100.0%
+  precision     100.0%     76.5%      86.7%      83.3%
+  recall         98.2%    100.0%     100.0%      93.8%
+  specificity   100.0%     60.0%      77.8%      78.6%
 
-  112 labelled scenarios · 174 labels (104 positive, 70 negative controls) · 20 rules · 378 tests
-  * upper bound: six FRESH v3 firings were unlabelled at the reading and are being triaged
+  114 labelled scenarios · 182 labels (107 positive, 75 negative controls) · 20 rules · 379 tests
 ```
 
-> **Read these numbers carefully.** TRAIN is where thresholds are tuned, so its 100% is in-sample.
+> **Read these numbers carefully.** TRAIN is where thresholds are tuned, so it is in-sample; its one
+> miss is a documented gap (a grant used for a year and then abandoned) that no rule reads yet.
 > Each **FRESH** column is a set of scenarios written *after* the rules were frozen and read
 > exactly once. After the first reading, the failure *shapes* it exposed (an emergency account
 > meant to sit unused, a job with little history, a department that is a minority but not absent
@@ -32,8 +32,10 @@ access worth converting.
 > brand-new integration with no history, and departments with no notion of adjacent teams.
 > **FRESH v3** tests the identity-graph rules. It was written by an author who never opened the rule
 > code (though they did see the project notes describing it), so it is more independent than v1/v2.
-> Its one miss is a new shape — a grant used for a year and then abandoned, which the staleness
-> rules cannot see. Everything is synthetic.
+> Its column is the one reading under the frozen rules, after six unlabelled firings were triaged
+> into labels. It exposed three shapes: a grant used and then abandoned (the miss), a long chain's
+> stepping-stone roles counted as breadth (since fixed on TRAIN, so later v3 scores are not quoted),
+> and a `login` event that cannot say whether a person or a pipeline signed in. Everything is synthetic.
 
 ---
 

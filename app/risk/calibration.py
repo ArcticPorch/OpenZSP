@@ -34,7 +34,16 @@ TUNABLE_MODULES = (detections, scoring)
 # History: gustav/EXCESSIVE_PRIVILEGE (2026-09-29, a MEDIUM tool governing a
 # CRITICAL ledger) was closed by standing_permission_management.v2 reading
 # effective reach (2026-09-30).
-STRUCTURAL_MISSES: frozenset[str] = frozenset()
+STRUCTURAL_MISSES: frozenset[str] = frozenset(
+    {
+        # A grant used for a year, then abandoned while its holder stays active.
+        # The staleness rules read never-exercised grants and dormant
+        # identities; nothing reads a grant's *last* use against its own
+        # rhythm. The TRAIN case for the shape FRESH v3's amara exposed
+        # (2026-10-01). Closed by an abandoned-grant rule, next cycle.
+        "marisol/STALE_ACCESS",
+    }
+)
 
 
 @dataclass(frozen=True)

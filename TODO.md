@@ -36,8 +36,9 @@ connectors → evidence → normalize → models → graph → risk (features ·
   role-hidden sprawl / no crown jewel, shared contractor role; hop limits → compute bounds, likelihood falls per hop
 - [x] Labels + TRAIN / FRESH split for graph scenarios — FRESH v2 retired to HOLDOUT; FRESH v3 written code-blind by a subagent
 - [x] Calibrate hop limit and score thresholds (TRAIN only), read FRESH once — blast gate exactly 4; FRESH v3: 100%* / 92.3% / 100%
-- [ ] Triage the 6 unlabelled FRESH v3 firings (user decisions: stepping-stone roles as breadth vs vesna's TRAIN label; `login` from a CI service)
-- [ ] Next cycle: TRAIN case for a grant used, then abandoned while the identity stays active (FRESH v3 miss shape, amara) — in a new domain
+- [x] Triage the 6 unlabelled FRESH v3 firings — 3 TP, 3 traps; triaged reading 83.3% / 93.8% / 78.6%; vesna relabelled, blast radius v3 (stepping-stones not counted)
+- [x] TRAIN case for a grant used, then abandoned (FRESH v3 miss shape): marisol / nikolai — marisol a structural miss
+- [ ] Next cycle: abandoned-grant rule (a grant's last use against its own rhythm) — closes marisol
 - [ ] CLI: `--paths <identity>`, `--blast-radius`
 - [ ] Tests: graph build, reachability, path explanation, determinism
 - [ ] Update README + CLAUDE.md
@@ -53,6 +54,8 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [x] Tuning-curve charts for README
 
 ## Later — real deployment
+
+- [ ] Event auth kind (interactive vs programmatic) — `login` cannot tell a person from a pipeline (FRESH v3 CI deployer)
 
 - [ ] AWS connector (IAM Service Authorization Reference mapping)
 - [ ] Effective-permission evaluation (policies, boundaries, SCPs, conditions)

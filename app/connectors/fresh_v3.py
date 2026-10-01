@@ -816,6 +816,13 @@ def fresh_v3_scenarios() -> tuple:
                     "PRIVILEGE_ESCALATION", "v3_nadia_rn",
                     "A standing two-role chain gives her admin on a critical dispensing DB she holds no grant on.",
                 ),
+                ExpectedFinding(
+                    "EXCESSIVE_BLAST_RADIUS", "v3_nadia_rn",
+                    "Triage after the read (2026-10-01): one chain to one crown jewel is depth, not breadth; the "
+                    "role resources on it are stepping-stones, already counted through "
+                    "the roles' grants.",
+                    should_fire=False,
+                ),
             ),
             build=_v3_hospital_pharmacy_chain,
             split=FRESH,
@@ -884,6 +891,11 @@ def fresh_v3_scenarios() -> tuple:
                     "STALE_ACCESS", "v3_bg_ops_failover",
                     "A tagged break-glass account being unused is its designed state.",
                     should_fire=False,
+                ),
+                ExpectedFinding(
+                    "EXCESSIVE_PRIVILEGE", "v3_bg_ops_failover",
+                    "Triage after the read (2026-10-01): the tag excuses staleness, never privilege: standing "
+                    "admin on a crown jewel is still reported.",
                 ),
             ),
             build=_v3_airline_ops_role_breadth,
@@ -957,6 +969,12 @@ def fresh_v3_scenarios() -> tuple:
                     "PRIVILEGE_ESCALATION", "v3_kai_ediscovery",
                     "A standing four-role chain ends in admin on a critical vault he holds no grant on; long, but real.",
                 ),
+                ExpectedFinding(
+                    "EXCESSIVE_BLAST_RADIUS", "v3_kai_ediscovery",
+                    "Triage after the read (2026-10-01): a single five-hop chain to one vault is depth, not "
+                    "breadth; four of the six reachable resources are stepping-stone roles.",
+                    should_fire=False,
+                ),
             ),
             build=_v3_legal_long_chain,
             split=FRESH,
@@ -969,11 +987,14 @@ def fresh_v3_scenarios() -> tuple:
                     "PRIVILEGE_ESCALATION", "v3_bea_ot_access",
                     "Managing the broker lets her grant herself the maintenance role, which controls the critical RTU fleet.",
                 ),
-                # Label review before the read (2026-10-01): corpus convention
-                # (xenia) -- governing a role that controls a crown jewel is an
-                # attack path, reported as PRIVILEGE_ESCALATION; the same
-                # situation is not also labelled EXCESSIVE_PRIVILEGE. The
-                # double label came from the author's brief, not their judgement.
+                # Removed in a pre-read review that matched bea to xenia; wrong,
+                # because bea's broker governs a HIGH role resource and xenia's
+                # is MEDIUM. Restored in triage: the author's label was right.
+                ExpectedFinding(
+                    "EXCESSIVE_PRIVILEGE", "v3_bea_ot_access",
+                    "Triage after the read (2026-10-01): standing permission management over a control plane "
+                    "that governs a HIGH role resource. The author's original label.",
+                ),
             ),
             build=_v3_ot_broker_governs_role,
             split=FRESH,
@@ -1051,6 +1072,17 @@ def fresh_v3_scenarios() -> tuple:
                 ExpectedFinding(
                     "EXTERNAL_EXPOSURE", "v3_svc_portal_deployer",
                     "Standing deploy/admin on an internet-facing critical system holding patient records.",
+                ),
+                ExpectedFinding(
+                    "EXCESSIVE_PRIVILEGE", "v3_svc_portal_deployer",
+                    "Triage after the read (2026-10-01): standing admin and deploy on a CRITICAL system.",
+                ),
+                ExpectedFinding(
+                    "CONTEXT_MISMATCH", "v3_svc_portal_deployer",
+                    "Triage after the read (2026-10-01): the logins are the CI pipeline authenticating, as the "
+                    "author wrote it, not people. The event vocabulary cannot tell a "
+                    "programmatic sign-in from an interactive one -- a data-model gap.",
+                    should_fire=False,
                 ),
                 ExpectedFinding(
                     "EXTERNAL_EXPOSURE", "v3_mo_web_agency",

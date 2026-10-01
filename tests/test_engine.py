@@ -253,12 +253,17 @@ def _alarms(split):
 
 def test_fresh_false_alarms_are_exactly_the_recorded_ones():
     """
-    The one FRESH v3 reading (2026-10-01), pinned: all eleven traps held.
-    (FRESH v2's two recorded alarms moved to HOLDOUT with it.) Six firings were
-    unlabelled at the reading and are triaged separately; if one becomes a
-    trap label, it lands here as a measured false alarm.
+    FRESH v3 (2026-10-01). At the reading all eleven traps held; triage of the
+    six unlabelled firings added three traps that had fired under the frozen
+    rules -- kai and nadia (blast radius on one chain) and the CI deployer
+    (context mismatch) -- so the quoted, triaged reading is 83.3% precision /
+    78.6% specificity. Blast radius v3 (stepping-stones not counted, built on
+    TRAIN after vesna's relabel) then cleared kai and nadia. That later number
+    is not a generalisation estimate: the rule changed after the read. What
+    remains is the data-model gap: `login` cannot say whether a human or a
+    pipeline signed in.
     """
-    assert _alarms(FRESH) == set()
+    assert _alarms(FRESH) == {("v3_svc_portal_deployer", "CONTEXT_MISMATCH")}
 
 
 def test_holdout_false_alarms_are_exactly_the_recorded_ones():
