@@ -158,3 +158,14 @@ def test_cycle_two_values_are_the_only_or_middle_all_correct_ones():
     share = calibration.sweep("PEER_MAX_SAME_DEPT_SHARE", [0.0, 0.1, 0.19, 0.2], ANCHOR)
     assert [p.perfect for p in share] == [True, True, True, False]
     assert detections.PEER_MAX_SAME_DEPT_SHARE == 0.1
+
+
+def test_blast_radius_gate_is_exactly_four():
+    """
+    Graph cycle (2026-10-01): bounded below by teodor/xenia (one chain to one
+    crown jewel is depth, not breadth -- user's labelling decision) and above
+    by agent_triage's four-resource sprawl. The only all-correct value.
+    """
+    points = calibration.sweep("BLAST_RADIUS_MIN_RESOURCES", [3, 4, 5], ANCHOR)
+    assert [p.perfect for p in points] == [False, True, False]
+    assert detections.BLAST_RADIUS_MIN_RESOURCES == 4

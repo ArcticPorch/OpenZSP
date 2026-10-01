@@ -253,27 +253,29 @@ def _alarms(split):
 
 def test_fresh_false_alarms_are_exactly_the_recorded_ones():
     """
-    The one FRESH v2 reading (2026-09-29, after calibration cycle 2), pinned.
-
-    A newly connected integration's initial backfill reads as a bulk read
-    because it has no history (the rule fires on a zero baseline by design),
-    and a Treasury analyst on the AP ledger reads as a context mismatch
-    because departments are flat strings with no notion of adjacent teams.
-    If this set shrinks, check the change was made against TRAIN.
+    The one FRESH v3 reading (2026-10-01), pinned: all eleven traps held.
+    (FRESH v2's two recorded alarms moved to HOLDOUT with it.) Six firings were
+    unlabelled at the reading and are triaged separately; if one becomes a
+    trap label, it lands here as a measured false alarm.
     """
-    assert _alarms(FRESH) == {
-        ("svc_helpdesk_sync", "ANOMALOUS_BEHAVIOR"),
-        ("treasury_analyst", "CONTEXT_MISMATCH"),
-    }
+    assert _alarms(FRESH) == set()
 
 
 def test_holdout_false_alarms_are_exactly_the_recorded_ones():
     """
-    HOLDOUT now includes the retired FRESH v1. Its break-glass account carries
-    no tag in its evidence, so the engine cannot know it is one -- the fix was
-    the tag, and the tag has to come from the source of record.
+    HOLDOUT includes the retired FRESH v1 and v2, and their recorded alarms.
+
+    v1: the break-glass account carries no tag in its evidence, so the engine
+    cannot know it is one -- the fix was the tag, from the source of record.
+    v2: a new integration's initial backfill reads as a bulk read (no history;
+    the rule fires on a zero baseline by design), and a Treasury analyst on the
+    AP ledger reads as a context mismatch (departments are flat strings).
     """
-    assert _alarms(HOLDOUT) == {("breakglass_root", "STALE_ACCESS")}
+    assert _alarms(HOLDOUT) == {
+        ("breakglass_root", "STALE_ACCESS"),
+        ("svc_helpdesk_sync", "ANOMALOUS_BEHAVIOR"),
+        ("treasury_analyst", "CONTEXT_MISMATCH"),
+    }
 
 
 def test_break_glass_tag_excuses_dormancy_never_privilege():
@@ -313,8 +315,26 @@ def test_known_misses_are_exactly_the_documented_ones():
     miss (2026-09-29) until `standing_permission_management.v2` read `governs`
     through effective reach (2026-09-30).
     """
-    m = evaluate(ANCHOR)
-    assert {f"{o.subject_id}/{o.factor_type}" for o in m.misses()} == STRUCTURAL_MISSES
+    tuned = {
+        f"{o.subject_id}/{o.factor_type}"
+        for split in (TRAIN, HOLDOUT)
+        for o in evaluate(ANCHOR, split=split).misses()
+    }
+    assert tuned == STRUCTURAL_MISSES
+
+
+def test_fresh_misses_are_exactly_the_recorded_ones():
+    """
+    The one FRESH v3 reading (2026-10-01), pinned as a measurement -- never a
+    target. amara wrote to the lab store daily until 250 days ago and then
+    stopped, while staying active elsewhere. The staleness rules see grants
+    that were *never* exercised and identities gone dormant; a grant used once
+    and abandoned is invisible to both. A new failure shape: the fix is a TRAIN
+    case of that shape in a different domain, next cycle.
+    """
+    assert {
+        (o.subject_id, o.factor_type) for o in evaluate(ANCHOR, split=FRESH).misses()
+    } == {("v3_amara_phd", "STALE_ACCESS")}
 
 
 def test_metrics_are_deterministic():

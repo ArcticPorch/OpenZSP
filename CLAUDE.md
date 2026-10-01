@@ -125,26 +125,27 @@ Scoring is **rules carrying their own confidence**, aggregated probabilistically
 
 - **TRAIN** — tune here, freely.
 - **HOLDOUT** — contaminated. The original held-out half (written with the rules visible) plus every *retired* FRESH set. Never quote it. It grows each cycle; that is expected.
-- **FRESH** — written *after* the rules were frozen, from real-world situations in domains the rules were not tuned on, and read **once**. The only column that estimates generalisation. Currently FRESH v2. At the start of the next calibration cycle it is retired into HOLDOUT and a new FRESH set is written (ideally by someone who has not read `detections.py`).
+- **FRESH** — written *after* the rules were frozen, from real-world situations in domains the rules were not tuned on, and read **once**. The only column that estimates generalisation. Currently **FRESH v3** (`app/connectors/fresh_v3.py`, its own module), written 2026-10-01 by a subagent that never opened `app/risk/`, `app/graph/`, tests, README or git history — **code-blind, not fully blind**: the harness loaded this file into its context. At the start of the next calibration cycle it is retired into HOLDOUT and a new FRESH set is written; a human-written blind set is still the parked goal.
 
 ```
                  train   holdout   fresh      gap
-  precision     100.0%     95.7%   86.7%   -13.3%
-  recall        100.0%    100.0%  100.0%    +0.0%
-  specificity   100.0%     94.1%   77.8%   -22.2%
+  precision     100.0%     92.1%  100.0%*   +0.0%
+  recall        100.0%    100.0%   92.3%    -7.7%
+  specificity   100.0%     88.5%  100.0%    +0.0%
+  * upper bound: 6 FRESH v3 firings unlabelled at the reading
 ```
 
-FRESH v1 (after cycle 1) read 76.5% precision / 60.0% specificity; FRESH v2 (after cycle 2) reads 86.7% / 77.8%, recall 100% both times. Whole corpus: 91 TP · 3 FP · 0 FN · 54 TN, zero unlabelled firings. **Quote FRESH, not TRAIN.**
+FRESH v1 (after cycle 1) read 76.5% precision / 60.0% specificity; FRESH v2 (after cycle 2) 86.7% / 77.8%, recall 100% both times. FRESH v3 (graph cycle, 2026-10-01; graph-weighted, 17 scenarios / 24 labels) read **100% precision (upper bound) / 92.3% recall / 100% specificity**, with 6 unlabelled firings awaiting triage. Two of its labels were reviewed before the read (li, bea), because the brief, not the author, had mislabelled them; bea's review was itself wrong (her governed role resource is HIGH, unlike xenia's), and she fired as unlabelled. Whole corpus: 103 TP · 3 FP · 1 FN · 67 TN. **Quote FRESH, not TRAIN.**
 
 **The discipline:** tune against TRAIN, freeze, write and read FRESH once, and never move a threshold because a FRESH number looked bad — the moment you do, FRESH is training data. When a FRESH reading reveals a failure *shape*, the fix is a new TRAIN case of that shape in a different domain (never a copy of the FRESH scenario), then the next cycle. `app/risk/calibration.py` enforces part of this: `sweep()` raises on any split but TRAIN. `test_detection_meets_calibration_floors` is measured on TRAIN only (floors 0.90 precision / 0.85 recall / 1.00 specificity; raise them when detection genuinely improves, never lower one to make a change pass). `test_no_negative_control_fires_in_train` demands zero false alarms on TRAIN only; held-out false alarms are *measurements*, pinned exactly:
 
-- FRESH `svc_helpdesk_sync / ANOMALOUS_BEHAVIOR` — cold start: a new integration's initial backfill has no history, and `bulk_read_burst` fires on a zero baseline by design.
-- FRESH `treasury_analyst / CONTEXT_MISMATCH` — flat departments: Treasury on the AP ledger is adjacent-team work, but departments are strings with no hierarchy. (A triage judgement call.)
+- HOLDOUT (retired FRESH v2) `svc_helpdesk_sync / ANOMALOUS_BEHAVIOR` — cold start: a new integration's initial backfill has no history, and `bulk_read_burst` fires on a zero baseline by design.
+- HOLDOUT (retired FRESH v2) `treasury_analyst / CONTEXT_MISMATCH` — flat departments: Treasury on the AP ledger is adjacent-team work, but departments are strings with no hierarchy. (A triage judgement call.)
 - HOLDOUT `breakglass_root / STALE_ACCESS` — retired FRESH v1; its evidence carries no break-glass tag, so the engine cannot know.
 
 `tests/test_split.py` guards the rest: the splits partition cleanly, **no subject appears in two splits**, both held-out splits carry both polarities, span ≥4 factor types and have ≥6 positives / ≥3 negatives, TRAIN keeps ≥50% of labels and FRESH ≥10%, and a per-split score agrees pair-for-pair with the whole-corpus score. That last one rests on scenario independence — and, for the peer rule, on `test_no_resource_is_shared_between_scenarios`.
 
-There are **no known misses**. `calibration.STRUCTURAL_MISSES` (currently empty) lists misses no threshold can move because no rule reads the fact they turn on, each naming what closes it; sweeps ignore them when finding plateaus, and `test_known_misses_are_exactly_the_documented_ones` pins the actual misses to exactly that list. Remove an entry the moment a rule closes it. gustav was the first: a structural miss from 2026-09-29 until `standing_permission_management.v2` read `governs` through effective reach. oscar was fixed by `peer_access_outlier.v1`, agent_ops by `privilege_creep.v1`. `frank / EXCESSIVE_PRIVILEGE` was removed as a label on review (it double-counted his departure). **Never remove or flip a label because the engine misses it** — decide on what the factor type means, write the reason on the scenario, and report the metric change as a label change. Triage of an unlabelled firing follows the truth whichever way it moves the number.
+On TRAIN and HOLDOUT there are **no known misses**; FRESH v3 has one measured miss, pinned by `test_fresh_misses_are_exactly_the_recorded_ones`: `v3_amara_phd / STALE_ACCESS`, a grant used for a year and then abandoned while the identity stays active. The staleness rules see *never-exercised* grants and dormant identities, not abandoned ones — a new failure shape, fixed next cycle by a TRAIN case of that shape in another domain, never by touching v3. `calibration.STRUCTURAL_MISSES` (currently empty) lists misses no threshold can move because no rule reads the fact they turn on, each naming what closes it; sweeps ignore them when finding plateaus, and `test_known_misses_are_exactly_the_documented_ones` pins the actual misses to exactly that list. Remove an entry the moment a rule closes it. gustav was the first: a structural miss from 2026-09-29 until `standing_permission_management.v2` read `governs` through effective reach. oscar was fixed by `peer_access_outlier.v1`, agent_ops by `privilege_creep.v1`. `frank / EXCESSIVE_PRIVILEGE` was removed as a label on review (it double-counted his departure). **Never remove or flip a label because the engine misses it** — decide on what the factor type means, write the reason on the scenario, and report the metric change as a label change. Triage of an unlabelled firing follows the truth whichever way it moves the number.
 
 The privilege rule's sensitivity line is pinned from both sides in TRAIN: bob CRITICAL fires, `hugo` HIGH fires, `ines` MEDIUM must not; `henry` LOW guards it in holdout. HIGH was a labelling decision by the user on 2026-09-29: whoever needs admin on a HIGH resource should request it JIT.
 
@@ -154,7 +155,7 @@ The privilege rule's sensitivity line is pinned from both sides in TRAIN: bob CR
 
 ### Calibration
 
-`python -m app.main --sweep NAME=v1,v2,...` evaluates TRAIN once per value of a constant in `detections.py` or `scoring.py` and reports the widest all-correct range (the *plateau*). Two cycles have been run. Criterion, declared before sweeping: keep the current value if its distance to the nearer plateau edge is ≥ half the plateau's half-width, otherwise move to the midpoint (log scale / geometric midpoint for ratio thresholds; for integers, the value requiring more evidence).
+`python -m app.main --sweep NAME=v1,v2,...` evaluates TRAIN once per value of a constant in `detections.py` or `scoring.py` and reports the widest all-correct range (the *plateau*). Two detection cycles and one graph cycle have been run. Criterion, declared before sweeping: keep the current value if its distance to the nearer plateau edge is ≥ half the plateau's half-width, otherwise move to the midpoint (log scale / geometric midpoint for ratio thresholds; for integers, the value requiring more evidence).
 
 | Threshold | All-correct on TRAIN | Value |
 |---|---|---|
@@ -163,6 +164,7 @@ The privilege rule's sensitivity line is pinned from both sides in TRAIN: bob CR
 | `PEER_MAX_SAME_DEPT_SHARE` | 0 – <0.2 | 0.1 (cycle 2, from 0.25) |
 | `MIN_REPORTING_CONFIDENCE` | >0.095 – 0.57 | 0.35 (kept) |
 | `BULK_READ_BASELINE_MULTIPLIER` | >1.67 – 6.5 | 3 (kept) |
+| `BLAST_RADIUS_MIN_RESOURCES` | exactly 4 | 4 (graph cycle; teodor/xenia below — one chain to one crown jewel is depth, the user's labelling decision — agent_triage above) |
 | `REACH_MAX_HOPS` | ≥6 | 8 — a **compute bound, not a detection threshold** (vesna sets the lower edge; no upper edge needed) |
 | `ATTACK_PATH_MAX_HOPS` | ≥6 | 8 — compute bound, as above |
 

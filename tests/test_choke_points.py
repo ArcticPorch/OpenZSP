@@ -123,6 +123,10 @@ def test_corpus_choke_points_are_deterministic():
         ("gustav", "treasury_payments_ledger"),
         ("petra", "support_crm_db"),
         ("teodor", "fleet_telemetry_db"),
+        ("v3_bea_ot_access", "v3_res_rtu_fleet"),
+        ("v3_kai_ediscovery", "v3_res_privileged_docs_vault"),
+        ("v3_li_servicedesk", "v3_res_student_records"),
+        ("v3_nadia_rn", "v3_res_controlled_rx_db"),
         ("vesna", "subscriber_billing_db"),
         ("xenia", "payroll_ledger"),
     }

@@ -2795,7 +2795,9 @@ def _terraform_runner_org_wide(b: EvidenceBuilder, rng: random.Random) -> list[E
 
 
 # --------------------------------------------------------------------------
-# FRESH v2 (written 2026-09-29, after calibration cycle 2 froze the rules)
+# Retired FRESH v2 (written 2026-09-29 after calibration cycle 2 froze the
+# rules, read once, retired into HOLDOUT 2026-10-01 at the start of the graph
+# calibration cycle)
 #
 # Same discipline as v1: real-world situations, labels state the truth of the
 # situation, nothing scored while writing, read once. New domains throughout,
@@ -3668,6 +3670,14 @@ SCENARIOS: tuple[Scenario, ...] = (
                 "CRITICAL telemetry database: control of a crown jewel he holds "
                 "no grant on, three standing hops away.",
             ),
+            ExpectedFinding(
+                "EXCESSIVE_BLAST_RADIUS",
+                "teodor",
+                "Three resources on one chain -- two stepping-stones and one crown "
+                "jewel -- is depth, which the attack-path finding reports, not "
+                "breadth. Bounds the blast-radius gate from below (user, 2026-10-01).",
+                should_fire=False,
+            ),
         ),
         build=_three_hop_chain,
     ),
@@ -3730,6 +3740,13 @@ SCENARIOS: tuple[Scenario, ...] = (
                 "Permission management over the console that governs the "
                 "payroll-admin role: she can rewrite its trust and become it, "
                 "and the role administers the CRITICAL payroll ledger.",
+            ),
+            ExpectedFinding(
+                "EXCESSIVE_BLAST_RADIUS",
+                "xenia",
+                "Console, role, ledger: one route to one crown jewel. Depth, not "
+                "breadth -- the attack-path finding covers it.",
+                should_fire=False,
             ),
         ),
         build=_governed_role_to_crown_jewel,
@@ -4368,7 +4385,7 @@ SCENARIOS: tuple[Scenario, ...] = (
         build=_terraform_runner_org_wide,
         split=HOLDOUT,
     ),
-    # --- FRESH v2 (2026-09-29, after calibration cycle 2 froze the rules) -----
+    # --- Retired FRESH v2 (read once 2026-09-29) -> HOLDOUT -------------------
     Scenario(
         name='v2_shared_service_credential',
         description='A service account whose key analysts log in with.',
@@ -4380,7 +4397,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_shared_service_credential,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_idle_admin_on_crm',
@@ -4398,7 +4415,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_idle_admin_on_crm,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_break_glass_annual_drill',
@@ -4417,7 +4434,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_break_glass_annual_drill,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_quarterly_job_running_late',
@@ -4431,7 +4448,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_quarterly_job_running_late,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_quarter_end_board_pull',
@@ -4445,7 +4462,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_quarter_end_board_pull,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_new_integration_initial_sync',
@@ -4459,7 +4476,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_new_integration_initial_sync,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_engineer_exit_repo_clone',
@@ -4472,7 +4489,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_engineer_exit_repo_clone,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_marketing_intern_on_hr_db',
@@ -4485,7 +4502,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_marketing_intern_on_hr_db,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_finance_member_on_ap_db',
@@ -4509,7 +4526,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_finance_member_on_ap_db,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_agent_jit_secret_reader',
@@ -4523,7 +4540,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_agent_jit_secret_reader,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_ml_pipeline_creep',
@@ -4547,7 +4564,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_ml_pipeline_creep,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_public_bucket_admin_medium',
@@ -4561,7 +4578,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_public_bucket_admin_medium,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_partner_write_on_claims',
@@ -4574,7 +4591,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_partner_write_on_claims,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_login_burst_then_self_grant',
@@ -4592,7 +4609,7 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_login_burst_then_self_grant,
-        split=FRESH,
+        split=HOLDOUT,
     ),
     Scenario(
         name='v2_integration_hub_wide_write',
@@ -4611,9 +4628,18 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_v2_integration_hub_wide_write,
-        split=FRESH,
+        split=HOLDOUT,
     ),
 )
+
+# FRESH v3 lives in its own module because it was written by an author who
+# never opened the rules (see its docstring), and keeping it apart keeps it
+# reviewable on its own. Appended here, before `SyntheticConnector` binds
+# SCENARIOS as a default argument. The module imports this one lazily, inside
+# the function, so there is no import cycle at load time.
+from app.connectors.fresh_v3 import fresh_v3_scenarios  # noqa: E402
+
+SCENARIOS = SCENARIOS + fresh_v3_scenarios()
 
 
 def scenarios_for(split: Optional[str] = None) -> tuple[Scenario, ...]:

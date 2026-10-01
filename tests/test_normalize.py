@@ -302,9 +302,11 @@ def test_normalizes_the_full_scenario_set_cleanly():
     assert labelled <= {i.id for i in estate.identities}
     assert estate.events
     # Everyone holds something -- except a role at the end of a broken chain,
-    # whose emptiness is the point of `broken_chain`.
-    empty = {i.id for i in estate.identities if not i.permissions}
-    assert empty == {"role_yard_ops"}
+    # whose emptiness is the point of the scenario (`broken_chain`, and FRESH
+    # v3's emptied sequencer role). A person or service holding nothing would
+    # mean a grant was lost in normalization.
+    empty = [i for i in estate.identities if not i.permissions]
+    assert empty and all(i.identity_type is IdentityType.ROLE for i in empty)
 
 
 def test_every_grant_is_citable_end_to_end():

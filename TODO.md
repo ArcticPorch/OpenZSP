@@ -34,8 +34,10 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [x] Choke points: edges that cut the most paths (verified by removal; attack + governs routes)
 - [x] Graph scenarios (TRAIN): 3-hop chain / broken chain, 6-hop chain / HIGH end, governs → role / LOW only,
   role-hidden sprawl / no crown jewel, shared contractor role; hop limits → compute bounds, likelihood falls per hop
-- [ ] Labels + TRAIN / FRESH split for graph scenarios
-- [ ] Calibrate hop limit and score thresholds (TRAIN only), read FRESH once
+- [x] Labels + TRAIN / FRESH split for graph scenarios — FRESH v2 retired to HOLDOUT; FRESH v3 written code-blind by a subagent
+- [x] Calibrate hop limit and score thresholds (TRAIN only), read FRESH once — blast gate exactly 4; FRESH v3: 100%* / 92.3% / 100%
+- [ ] Triage the 6 unlabelled FRESH v3 firings (user decisions: stepping-stone roles as breadth vs vesna's TRAIN label; `login` from a CI service)
+- [ ] Next cycle: TRAIN case for a grant used, then abandoned while the identity stays active (FRESH v3 miss shape, amara) — in a new domain
 - [ ] CLI: `--paths <identity>`, `--blast-radius`
 - [ ] Tests: graph build, reachability, path explanation, determinism
 - [ ] Update README + CLAUDE.md
@@ -47,7 +49,7 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [ ] Peer groups by identity type
 - [ ] Secret-path scoping for secret access
 - [ ] Sequence detections across rules
-- [ ] Blind FRESH set written by someone who hasn't read the rules
+- [ ] Blind FRESH set written by someone who hasn't read the rules (FRESH v3 is code-blind only: its author saw CLAUDE.md)
 - [x] Tuning-curve charts for README
 
 ## Later — real deployment
