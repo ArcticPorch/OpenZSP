@@ -334,12 +334,15 @@ def test_fresh_misses_are_exactly_the_recorded_ones():
     target. amara wrote to the lab store daily until 250 days ago and then
     stopped, while staying active elsewhere. The staleness rules see grants
     that were *never* exercised and identities gone dormant; a grant used once
-    and abandoned is invisible to both. A new failure shape: the fix is a TRAIN
-    case of that shape in a different domain, next cycle.
+    and abandoned is invisible to both. A new failure shape, fixed the
+    disciplined way: a TRAIN case of that shape in another domain (marisol vs
+    nikolai), then `abandoned_grant.v1` built on TRAIN (2026-10-03). amara is
+    caught now, but that is not a generalisation result -- the rule was
+    written after the read. The quoted FRESH v3 recall stays 93.8%.
     """
     assert {
         (o.subject_id, o.factor_type) for o in evaluate(ANCHOR, split=FRESH).misses()
-    } == {("v3_amara_phd", "STALE_ACCESS")}
+    } == set()
 
 
 def test_metrics_are_deterministic():

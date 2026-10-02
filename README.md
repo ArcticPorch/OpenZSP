@@ -16,14 +16,13 @@ access worth converting.
 ```
                  train   fresh v1   fresh v2   fresh v3
   precision     100.0%     76.5%      86.7%      83.3%
-  recall         98.2%    100.0%     100.0%      93.8%
+  recall        100.0%    100.0%     100.0%      93.8%
   specificity   100.0%     60.0%      77.8%      78.6%
 
-  114 labelled scenarios · 182 labels (107 positive, 75 negative controls) · 20 rules · 397 tests
+  114 labelled scenarios · 182 labels (107 positive, 75 negative controls) · 21 rules · 405 tests
 ```
 
-> **Read these numbers carefully.** TRAIN is where thresholds are tuned, so it is in-sample; its one
-> miss is a documented gap (a grant used for a year and then abandoned) that no rule reads yet.
+> **Read these numbers carefully.** TRAIN is where thresholds are tuned, so its 100% is in-sample.
 > Each **FRESH** column is a set of scenarios written *after* the rules were frozen and read
 > exactly once. After the first reading, the failure *shapes* it exposed (an emergency account
 > meant to sit unused, a job with little history, a department that is a minority but not absent
@@ -35,8 +34,9 @@ access worth converting.
 > code (though they did see the project notes describing it), so it is more independent than v1/v2.
 > Its column is the one reading under the frozen rules, after six unlabelled firings were triaged
 > into labels. It exposed three shapes: a grant used and then abandoned (the miss), a long chain's
-> stepping-stone roles counted as breadth (since fixed on TRAIN, so later v3 scores are not quoted),
-> and a `login` event that cannot say whether a person or a pipeline signed in. Everything is synthetic.
+> stepping-stone roles counted as breadth, and a `login` event that cannot say whether a person or a
+> pipeline signed in. The first two have since been fixed on TRAIN (an abandoned-grant rule, and
+> blast radius no longer counting stepping-stones), so later v3 scores are not quoted. Everything is synthetic.
 
 ---
 
@@ -134,7 +134,7 @@ graph/        identities, roles and resources as a graph; reach in four tiers, o
      ↓
 risk/         features (what happened) + coverage (how much we saw)
               + peer baseline (who else holds each resource) + each identity's reach
-              → 20 rules → confidence floor → probabilistic aggregation
+              → 21 rules → confidence floor → probabilistic aggregation
               + blast radius and choke points (remediation, not findings)
      ↓
 evaluation    findings vs ground truth → precision / recall / specificity,
@@ -189,10 +189,10 @@ each design decision and the conventions the tests enforce.
 ## Status
 
 This is a research and learning project in two parts, both measured against labelled data:
-detection engineering with calibration, and identity attack paths with blast radius. The next
-calibration cycle adds a rule for grants that were used and then abandoned, which is the gap the
-latest held-out set exposed. Everything runs on synthetic data; there is no connector to a real
-cloud provider yet.
+detection engineering with calibration, and identity attack paths with blast radius. The gap the
+latest held-out set exposed (grants used and then abandoned) now has a rule, built on training data
+only; the next fresh held-out set will be the first to measure it. Everything runs on synthetic data;
+there is no connector to a real cloud provider yet.
 
 ## License
 

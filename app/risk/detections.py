@@ -357,6 +357,90 @@ class UnusedStandingGrant:
         )
 
 
+class AbandonedGrant:
+    """
+    A standing grant that was used, then abandoned, judged against its own rhythm.
+
+    `unused_standing_grant` sees grants never exercised; `dormant_identity`
+    sees identities gone quiet. A grant used weekly for a year and then left
+    behind when its holder changed teams is neither: the grant has history and
+    the identity is busy elsewhere. FRESH v3's amara exposed the shape
+    (2026-10-01); `abandoned_grant` vs `quarterly_grant_mid_cycle` (marisol vs
+    nikolai) is the TRAIN pair.
+
+    Same arithmetic as `dormant_identity.v2`, one level down: silence since the
+    grant was last exercised, against max(`DORMANT_IDENTITY_DAYS`,
+    `CADENCE_TOLERANCE` x the median gap between the grant's use days) once it
+    has `MIN_CADENCE_GAPS` gaps. The rhythm can only raise the floor, so a
+    quarterly grant 75 days into its quarter is quiet while a weekly one silent
+    for 230 days is not. A grant used once has no rhythm and is judged by the
+    floor alone. Reuses the calibrated constants rather than adding new ones.
+    Break-glass accounts are skipped, as by every staleness rule.
+    """
+
+    rule_id = "abandoned_grant.v1"
+    factor_type = RiskFactorType.STALE_ACCESS
+
+    def evaluate(self, ctx: RuleContext) -> RuleOutcome:
+        if ctx.identity.is_break_glass:
+            return RuleOutcome.no_finding()
+        use_days: dict[tuple[str, EventAction], set] = {}
+        for e in ctx.past_events():
+            if e.success:
+                use_days.setdefault((e.resource_id, e.action), set()).add(e.timestamp.date())
+
+        abandoned = []  # (perm, silent_days, threshold)
+        for perm in ctx.identity.permissions:
+            if perm.lifecycle is not GrantLifecycle.STANDING:
+                continue
+            days = sorted(
+                set().union(*(
+                    use_days.get((perm.resource_id, act), set())
+                    for act in GRANT_EXERCISED_BY.get(perm.action, set())
+                ))
+            )
+            if not days:
+                continue  # never exercised: unused_standing_grant's finding
+            threshold = DORMANT_IDENTITY_DAYS
+            gaps = [(b - a).days for a, b in zip(days, days[1:])]
+            if len(gaps) >= MIN_CADENCE_GAPS:
+                threshold = max(threshold, CADENCE_TOLERANCE * median(gaps))
+            silent = (ctx.evaluation_time.date() - days[-1]).days
+            if silent >= threshold:
+                abandoned.append((perm, silent, threshold))
+
+        if not abandoned:
+            return RuleOutcome.no_finding()
+
+        def weight(item):
+            res = ctx.resource(item[0].resource_id)
+            critical = res is not None and res.sensitivity is Sensitivity.CRITICAL
+            return (critical, item[0].action.is_privileged, item[1])
+
+        worst, silent, threshold = max(abandoned, key=weight)
+        res = ctx.resource(worst.resource_id)
+        critical = res is not None and res.sensitivity is Sensitivity.CRITICAL
+        privileged = worst.action.is_privileged
+        impact = 8.0 if (critical and privileged) else 6.0 if critical or privileged else 3.5
+        return RuleOutcome(
+            fired=True,
+            subject=_identity_subject(ctx),
+            impact=impact,
+            likelihood=8.0,
+            confidence=confidence_from_coverage(ctx.coverage),
+            description=(
+                f"{len(abandoned)} standing grant(s) used and then abandoned, including "
+                f"{worst.action.value} on {worst.resource_id}: last used {silent} days ago "
+                f"(threshold for this grant: {threshold:.0f})."
+            ),
+            recommendation=(
+                "Revoke, or convert to JIT-eligible: the reason for this grant appears "
+                "to have ended."
+            ),
+            evidence_ids=_cite_grants(ctx, [p.id for p, _, _ in abandoned]),
+        )
+
+
 class ExpiredGrantStillAttached:
     """
     A time-bound grant whose expiry has passed and which is still present.
@@ -1435,6 +1519,7 @@ class PeerAccessOutlier:
 # The registry the engine runs. Order is stable so assessments diff cleanly.
 ALL_RULES: tuple = (
     UnusedStandingGrant(),
+    AbandonedGrant(),
     ExpiredGrantStillAttached(),
     DormantIdentity(),
     StandingPrivilegeOnHighValue(),

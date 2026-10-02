@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Start here
 
 1. **Read `TODO.md`.** It is the working plan. Work proceeds item by item in its order; tick each item (`- [x]`) in the same commit that completes it, and add new items there rather than anywhere else.
-2. **The graph connectivity & blast radius phase is complete** (2026-10-01): roles as principals, the graph, effective reach, blast radius, attack paths, choke points, a code-blind FRESH v3, and the CLI. The one open "Next" item is the abandoned-grant rule, which opens the next calibration cycle (it needs a FRESH v4). Detection & calibration's parked items stay parked unless the user asks. **JIT access is out of scope** for this project.
+2. **The graph connectivity & blast radius phase is complete** (2026-10-01): roles as principals, the graph, effective reach, blast radius, attack paths, choke points, a code-blind FRESH v3, and the CLI. Its follow-on, the abandoned-grant rule (`abandoned_grant.v1`), is also done (2026-10-03); FRESH v4 was skipped this cycle by the user's decision, so FRESH v3 remains the current, already-read set. Nothing is open under "Next". Detection & calibration's parked items stay parked unless the user asks. **JIT access is out of scope** for this project.
 3. **Two personal guides sit in the repo root but are gitignored** (`*Learning_Guide*.md`; details in the gitignored `CLAUDE.local.md`). Never commit them (no `git add -f`), link them from tracked files, or rename them out of the ignore pattern:
    - the original **learning guide** — frozen 2026-09-29. Never read it for tasks, never edit it.
    - the **graph learning guide** — the user's notes for this phase. **Update it whenever a graph item in `TODO.md` is completed**: fill that item's section with a few simple lines (what was built → why this way → the one thing to remember) and add a one-line entry to its decisions log for any design choice. Plain language, no code dumps; it is for understanding the architecture, not a spec. `TODO.md` stays the to-do list.
@@ -51,7 +51,7 @@ app/risk/blast_radius.py blast_radius(reach, resources, cut) → weighted sum ov
 app/risk/choke_points.py find_choke_points(estate, at) → links whose removal cuts the most crown-jewel routes
 app/risk/graph_report.py format_paths / format_blast_radius — CLI text; formats only what the rules compute
 app/risk/baselines.py  PeerBaseline — the one cross-identity pre-pass, built once per estate
-app/risk/detections.py 20 concrete rules across all 7 factor types
+app/risk/detections.py 21 concrete rules across all 7 factor types
       ↓
 app/risk/scoring.py    confidence, probabilistic aggregation, every tunable
       ↓
@@ -132,14 +132,14 @@ Scoring is **rules carrying their own confidence**, aggregated probabilistically
 
 ```
                  train   holdout   fresh      gap
-  precision     100.0%     92.1%   93.8%*   -6.2%
-  recall         98.2%    100.0%   93.8%*   -4.5%
+  precision     100.0%     92.1%   94.1%*   -5.9%
+  recall        100.0%    100.0%  100.0%*   +0.0%
   specificity   100.0%     88.5%   92.9%*   -7.1%
-  * live, NOT quotable: blast radius v3 changed after the read. Quote the
-    triaged reading under the frozen rules: 83.3% / 93.8% / 78.6%.
+  * live, NOT quotable: blast radius v3 and abandoned_grant.v1 came after the
+    read. Quote the triaged reading under the frozen rules: 83.3% / 93.8% / 78.6%.
 ```
 
-FRESH v1 (after cycle 1) read 76.5% precision / 60.0% specificity; FRESH v2 (after cycle 2) 86.7% / 77.8%, recall 100% both times. FRESH v3 (graph cycle, 2026-10-01; graph-weighted, 17 scenarios) read 100% (upper bound) / 92.3% / 100% with 6 unlabelled firings; **triaged by the user into 30 labels, the reading under the frozen rules is 83.3% precision / 93.8% recall / 78.6% specificity — the number to quote.** Triage: three true positives (the CI deployer's and the break-glass account's standing admin on crown jewels; bea's control plane over a HIGH role — restoring a label a pre-read review had wrongly removed) and three traps (kai and nadia: one chain to one crown jewel is depth, not breadth; the CI deployer's `login` events are a pipeline, not people). Afterwards `vesna`'s TRAIN blast-radius label was flipped to a trap on the same meaning, and `standing_blast_radius.v3` (stepping-stones not counted) was built on TRAIN; the live FRESH column above reflects that change and is not a generalisation estimate. Whole corpus: 105 TP · 4 FP · 2 FN · 71 TN. **Quote FRESH, not TRAIN.**
+FRESH v1 (after cycle 1) read 76.5% precision / 60.0% specificity; FRESH v2 (after cycle 2) 86.7% / 77.8%, recall 100% both times. FRESH v3 (graph cycle, 2026-10-01; graph-weighted, 17 scenarios) read 100% (upper bound) / 92.3% / 100% with 6 unlabelled firings; **triaged by the user into 30 labels, the reading under the frozen rules is 83.3% precision / 93.8% recall / 78.6% specificity — the number to quote.** Triage: three true positives (the CI deployer's and the break-glass account's standing admin on crown jewels; bea's control plane over a HIGH role — restoring a label a pre-read review had wrongly removed) and three traps (kai and nadia: one chain to one crown jewel is depth, not breadth; the CI deployer's `login` events are a pipeline, not people). Afterwards `vesna`'s TRAIN blast-radius label was flipped to a trap on the same meaning, and `standing_blast_radius.v3` (stepping-stones not counted) was built on TRAIN; the live FRESH column above reflects that change and is not a generalisation estimate. Whole corpus (live): 107 TP · 4 FP · 0 FN · 71 TN. **Quote FRESH, not TRAIN.**
 
 **The discipline:** tune against TRAIN, freeze, write and read FRESH once, and never move a threshold because a FRESH number looked bad — the moment you do, FRESH is training data. When a FRESH reading reveals a failure *shape*, the fix is a new TRAIN case of that shape in a different domain (never a copy of the FRESH scenario), then the next cycle. `app/risk/calibration.py` enforces part of this: `sweep()` raises on any split but TRAIN. `test_detection_meets_calibration_floors` is measured on TRAIN only (floors 0.90 precision / 0.85 recall / 1.00 specificity; raise them when detection genuinely improves, never lower one to make a change pass). `test_no_negative_control_fires_in_train` demands zero false alarms on TRAIN only; held-out false alarms are *measurements*, pinned exactly:
 
@@ -150,7 +150,7 @@ FRESH v1 (after cycle 1) read 76.5% precision / 60.0% specificity; FRESH v2 (aft
 
 `tests/test_split.py` guards the rest: the splits partition cleanly, **no subject appears in two splits**, both held-out splits carry both polarities, span ≥4 factor types and have ≥6 positives / ≥3 negatives, TRAIN keeps ≥50% of labels and FRESH ≥10%, and a per-split score agrees pair-for-pair with the whole-corpus score. That last one rests on scenario independence — and, for the peer rule, on `test_no_resource_is_shared_between_scenarios`.
 
-On TRAIN and HOLDOUT the only miss is structural (`marisol / STALE_ACCESS`, below); FRESH v3 has one measured miss, pinned by `test_fresh_misses_are_exactly_the_recorded_ones`: `v3_amara_phd / STALE_ACCESS`, a grant used for a year and then abandoned while the identity stays active. The staleness rules see *never-exercised* grants and dormant identities, not abandoned ones — a new failure shape. Its TRAIN case now exists in another domain — `marisol` (weekly for a year, abandoned 230 days ago) vs `nikolai` (a quarterly grant 75 days into its quarter) — and `marisol / STALE_ACCESS` is a structural miss until an abandoned-grant rule exists (next cycle). `calibration.STRUCTURAL_MISSES` lists misses no threshold can move because no rule reads the fact they turn on, each naming what closes it; sweeps ignore them when finding plateaus, and `test_known_misses_are_exactly_the_documented_ones` pins the actual misses to exactly that list. Remove an entry the moment a rule closes it. gustav was the first: a structural miss from 2026-09-29 until `standing_permission_management.v2` read `governs` through effective reach. oscar was fixed by `peer_access_outlier.v1`, agent_ops by `privilege_creep.v1`. `frank / EXCESSIVE_PRIVILEGE` was removed as a label on review (it double-counted his departure). **Never remove or flip a label because the engine misses it** — decide on what the factor type means, write the reason on the scenario, and report the metric change as a label change. Triage of an unlabelled firing follows the truth whichever way it moves the number.
+There are **no misses** in any split now, but read FRESH v3's carefully: its one measured miss at the reading, `v3_amara_phd / STALE_ACCESS` (a grant used for a year and then abandoned while the identity stays active), is caught today only because `abandoned_grant.v1` was written after the read. The fix followed the discipline — a TRAIN case of the shape in another domain first (`marisol`, weekly for a year then abandoned 230 days ago, vs `nikolai`, a quarterly grant 75 days into its quarter), then the rule built and checked on TRAIN (2026-10-03) — but the quoted FRESH v3 recall stays 93.8%; the first held-out measurement of the rule is the next FRESH set. `calibration.STRUCTURAL_MISSES` lists misses no threshold can move because no rule reads the fact they turn on, each naming what closes it; sweeps ignore them when finding plateaus, and `test_known_misses_are_exactly_the_documented_ones` pins the actual misses to exactly that list. Remove an entry the moment a rule closes it. gustav was the first: a structural miss from 2026-09-29 until `standing_permission_management.v2` read `governs` through effective reach. marisol was the second, from 2026-10-01 until `abandoned_grant.v1`. oscar was fixed by `peer_access_outlier.v1`, agent_ops by `privilege_creep.v1`. `frank / EXCESSIVE_PRIVILEGE` was removed as a label on review (it double-counted his departure). **Never remove or flip a label because the engine misses it** — decide on what the factor type means, write the reason on the scenario, and report the metric change as a label change. Triage of an unlabelled firing follows the truth whichever way it moves the number.
 
 The privilege rule's sensitivity line is pinned from both sides in TRAIN: bob CRITICAL fires, `hugo` HIGH fires, `ines` MEDIUM must not; `henry` LOW guards it in holdout. HIGH was a labelling decision by the user on 2026-09-29: whoever needs admin on a HIGH resource should request it JIT.
 
@@ -169,6 +169,7 @@ The privilege rule's sensitivity line is pinned from both sides in TRAIN: bob CR
 | `PEER_MAX_SAME_DEPT_SHARE` | 0 – <0.2 | 0.1 (cycle 2, from 0.25) |
 | `MIN_REPORTING_CONFIDENCE` | >0.095 – 0.57 | 0.35 (kept) |
 | `BULK_READ_BASELINE_MULTIPLIER` | >1.67 – 6.5 | 3 (kept) |
+| `DORMANT_IDENTITY_DAYS` | ≤30 – 150 | 90 — the floor under both `dormant_identity.v2` and `abandoned_grant.v1`; **bounded only above** (svc_quarterly_recon is missed at 180), so a guess: add a TRAIN trap below it before tuning |
 | `BLAST_RADIUS_MIN_RESOURCES` | 3 – 4 | 4 (graph cycle; xenia fires at 2, agent_triage is missed at 5; integer plateau keeps the value needing more evidence) |
 | `REACH_MAX_HOPS` | ≥6 | 8 — a **compute bound, not a detection threshold** (vesna sets the lower edge; no upper edge needed) |
 | `ATTACK_PATH_MAX_HOPS` | ≥6 | 8 — compute bound, as above |
@@ -193,6 +194,10 @@ A finding below `MIN_REPORTING_CONFIDENCE` (0.35) is **suppressed, not reported*
 Freshness decays exponentially (7-day half-life) rather than cliff-edging, so a rule firing at 6.9 days and vanishing at 7.1 can't happen; that discontinuity is impossible to calibrate against.
 
 Note `carol` and `priya` both carry a deliberately unexercised grant. Without it every rule declined on them for unrelated reasons and the negative controls passed *by accident* — the suppression path was never exercised end to end. `test_blind_spot_findings_are_suppressed_not_silently_dropped` asserts `suppressed` is non-empty for exactly that reason.
+
+### Abandoned grants
+
+`abandoned_grant.v1` (STALE_ACCESS) covers the staleness shape the other two rules cannot see: a standing grant that *was* exercised and then left behind while its holder stays active. `unused_standing_grant` owns grants with no history; `dormant_identity.v2` owns identities gone quiet. Same arithmetic as dormancy, one level down — silence since the grant's last authorised use (`GRANT_EXERCISED_BY`, so a read never keeps a destroy grant alive; a successful login keeps any grant alive) against max(`DORMANT_IDENTITY_DAYS`, `CADENCE_TOLERANCE` × the median gap between the grant's use days) once it has `MIN_CADENCE_GAPS` gaps. It reuses the calibrated constants; their plateaus did not move. Standing grants only; break-glass skipped.
 
 ### Rule conventions
 

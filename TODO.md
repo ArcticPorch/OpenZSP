@@ -41,7 +41,7 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [x] CLI: `--paths <identity>`, `--blast-radius` (app/risk/graph_report.py)
 - [x] Tests: graph build, reachability, path explanation, determinism — audit; fixed a shadowed test; corpus properties; hash-seed determinism
 - [x] Update README + CLAUDE.md — graph phase wrap-up
-- [ ] Next cycle: abandoned-grant rule (a grant's last use against its own rhythm) — closes marisol
+- [x] Abandoned-grant rule (`abandoned_grant.v1`, a grant's last use against its own rhythm) — closes marisol; FRESH v4 skipped this cycle (user)
 
 ## Detection & calibration — parked
 
@@ -50,7 +50,8 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [ ] Peer groups by identity type
 - [ ] Secret-path scoping for secret access
 - [ ] Sequence detections across rules
-- [ ] Blind FRESH set written by someone who hasn't read the rules (FRESH v3 is code-blind only: its author saw CLAUDE.md)
+- [ ] Blind FRESH set written by someone who hasn't read the rules (FRESH v3 is code-blind only: its author saw CLAUDE.md) — also the first held-out reading of `abandoned_grant.v1`
+- [ ] Bound `DORMANT_IDENTITY_DAYS` from below: a TRAIN trap (e.g. a grant used a few times, quiet ~60 days) before anyone tunes it
 - [x] Tuning-curve charts for README
 
 ## Later — real deployment
