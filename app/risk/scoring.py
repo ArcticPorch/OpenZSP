@@ -83,6 +83,13 @@ BLAST_IMPACT_HALF_SCORE = 30.0
 # after, never below the floor. Each extra hop is another condition this model
 # cannot evaluate, so a long chain is less certain -- not harmless. Anchored,
 # not calibrated: no label depends on likelihood.
+# A baseline rule judging an identity too new to have a baseline: the finding
+# is kept, at the confidence of a blind spot -- 0.95 x 0.1 = 0.095, carol's
+# dead-connector level -- so it is suppressed and shown as a coverage gap.
+# Anchored there on purpose: 0.3 (just under the floor) made the floor's own
+# plateau edge an artefact of this constant (0.285), which a sweep showed.
+COLD_START_CONFIDENCE_FACTOR = 0.1
+
 ATTACK_PATH_BASE_LIKELIHOOD = 7.0
 ATTACK_PATH_EXTERNAL_LIKELIHOOD = 8.5
 ATTACK_PATH_HOP_DECAY = 0.7

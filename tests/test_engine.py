@@ -272,13 +272,15 @@ def test_holdout_false_alarms_are_exactly_the_recorded_ones():
 
     v1: the break-glass account carries no tag in its evidence, so the engine
     cannot know it is one -- the fix was the tag, from the source of record.
-    v2: a new integration's initial backfill reads as a bulk read (no history;
-    the rule fires on a zero baseline by design), and a Treasury analyst on the
-    AP ledger reads as a context mismatch (departments are flat strings).
+    v2: a Treasury analyst on the AP ledger reads as a context mismatch
+    (departments are flat strings, and this scenario's data carries no org
+    path). v2's other recorded alarm -- a new integration's backfill read as a
+    bulk read -- is now held back by bulk_read_burst.v2's cold-start grace,
+    built on TRAIN (2026-10-03); HOLDOUT is contaminated, so that is a note,
+    not a result.
     """
     assert _alarms(HOLDOUT) == {
         ("breakglass_root", "STALE_ACCESS"),
-        ("svc_helpdesk_sync", "ANOMALOUS_BEHAVIOR"),
         ("treasury_analyst", "CONTEXT_MISMATCH"),
     }
 

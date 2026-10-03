@@ -42,6 +42,11 @@ class Permission:
     lifecycle: GrantLifecycle = GrantLifecycle.STANDING
     granted_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
+    # The part of the resource the grant covers, as the source states it:
+    # "kv/route-api/*" on a vault. None means the whole resource. A path the
+    # engine does not interpret -- it only tells "this service's own secrets"
+    # apart from "every secret in the store".
+    scope: Optional[str] = None
 
     def __post_init__(self) -> None:
         validate_non_empty_str(self.id, "id")
@@ -55,6 +60,8 @@ class Permission:
             raise TypeError(
                 f"lifecycle must be a GrantLifecycle, got {type(self.lifecycle).__name__}"
             )
+        if self.scope is not None:
+            validate_non_empty_str(self.scope, "scope")
         if self.granted_at is not None:
             validate_tz_datetime(self.granted_at, "granted_at")
         if self.expires_at is not None:

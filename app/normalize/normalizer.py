@@ -361,6 +361,8 @@ class Normalizer:
             # judged like any other, which errs toward reporting it.
             is_break_glass=bool(p.get("is_break_glass", False)),
             permissions=permissions,
+            # Optional: no org path means only the flat department is known.
+            org_path=_optional_str(p, "org_path"),
         )
 
     @staticmethod
@@ -400,6 +402,8 @@ class Normalizer:
                 ),
                 granted_at=_parse_dt(p["granted_at"], "granted_at") if "granted_at" in p else None,
                 expires_at=_parse_dt(p["expires_at"], "expires_at") if "expires_at" in p else None,
+                # Optional: no scope means the grant covers the whole resource.
+                scope=_optional_str(p, "scope"),
             )
         except (ValueError, TypeError) as exc:
             # Permission enforces its own invariants (e.g. time_bound requires an

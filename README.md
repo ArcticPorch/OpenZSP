@@ -19,7 +19,7 @@ access worth converting.
   recall        100.0%    100.0%     100.0%      93.8%
   specificity   100.0%     60.0%      77.8%      78.6%
 
-  114 labelled scenarios · 182 labels (107 positive, 75 negative controls) · 21 rules · 405 tests
+  125 labelled scenarios · 196 labels (115 positive, 81 negative controls) · 21 rules + 1 sequence stage · 430 tests
 ```
 
 > **Read these numbers carefully.** TRAIN is where thresholds are tuned, so its 100% is in-sample.
@@ -134,7 +134,7 @@ graph/        identities, roles and resources as a graph; reach in four tiers, o
      ↓
 risk/         features (what happened) + coverage (how much we saw)
               + peer baseline (who else holds each resource) + each identity's reach
-              → 21 rules → confidence floor → probabilistic aggregation
+              → 21 rules → cross-rule sequences → confidence floor → probabilistic aggregation
               + blast radius and choke points (remediation, not findings)
      ↓
 evaluation    findings vs ground truth → precision / recall / specificity,

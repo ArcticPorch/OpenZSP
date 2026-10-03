@@ -33,6 +33,10 @@ class RiskFactorType(Enum):
     EXTERNAL_EXPOSURE = "EXTERNAL_EXPOSURE"
     EXCESSIVE_BLAST_RADIUS = "EXCESSIVE_BLAST_RADIUS"
     CONTEXT_MISMATCH = "CONTEXT_MISMATCH"
+    # Several event-based findings on one identity close together in time:
+    # one incident, not coincidences. Raised by the engine's sequence stage
+    # (`app/risk/sequences.py`), never by a rule.
+    MULTI_STAGE_SEQUENCE = "MULTI_STAGE_SEQUENCE"
 
 
 class RiskSubjectType(Enum):

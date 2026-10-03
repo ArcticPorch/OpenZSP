@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Optional
 
 from app.models.permission import Permission
 class IdentityType(Enum):
@@ -29,3 +30,15 @@ class Identity:
     # hide that. The tag is input, not proof.
     is_break_glass: bool = False
     permissions: list["Permission"] = field(default_factory=list)
+    # Where the identity sits in the organisation, as an HR feed supplies it:
+    # "Finance/Treasury". Optional; without it the flat department is all we
+    # know. Departments are free text, so "Treasury" and "Accounts Payable"
+    # look unrelated -- the path says they are both Finance.
+    org_path: Optional[str] = None
+
+    @property
+    def org_family(self) -> str:
+        """The top-level org unit, or the department when no path is known."""
+        if self.org_path:
+            return self.org_path.split("/", 1)[0].strip()
+        return self.department

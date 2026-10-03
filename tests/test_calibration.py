@@ -170,3 +170,42 @@ def test_blast_radius_gate_plateau():
     points = calibration.sweep("BLAST_RADIUS_MIN_RESOURCES", [2, 3, 4, 5], ANCHOR)
     assert [p.perfect for p in points] == [False, True, True, False]
     assert detections.BLAST_RADIUS_MIN_RESOURCES == 4
+
+
+def test_dormancy_floor_is_bounded_on_both_sides():
+    """
+    2026-10-03: tobias (six weeks' parental leave on a weekly rhythm) fires at a
+    46-day floor -- the lower edge. svc_quarterly_recon is missed at 165 -- the
+    upper. 90 is 44 days from the nearer edge, more than half the plateau's
+    half-width (57), so it is kept. The floor serves both dormant_identity.v2
+    and abandoned_grant.v1.
+    """
+    points = calibration.sweep("DORMANT_IDENTITY_DAYS", [46, 47, 160, 165], ANCHOR)
+    assert [p.perfect for p in points] == [False, True, True, False]
+    assert detections.DORMANT_IDENTITY_DAYS == 90.0
+
+
+def test_cold_start_grace_is_bounded_on_both_sides():
+    """
+    2026-10-03: the telematics ingest (4 days old, backfilling) is reported at
+    a 4-day grace -- the lower edge; ruairi (onboarded 42 days ago, then a
+    burst) is missed at 43 -- the upper. A new constant, set at the midpoint.
+    """
+    points = calibration.sweep("COLD_START_DAYS", [4, 5, 42, 43], ANCHOR)
+    assert [p.perfect for p in points] == [False, True, True, False]
+    assert detections.COLD_START_DAYS == 23
+
+
+def test_sequence_window_sits_between_the_pair():
+    """
+    2026-10-03: kasimir's stages are ~1h45m apart (missed at a 1-hour window);
+    leopold's are 38 days apart (fires at 39 days). 24h is well inside, on a
+    log scale, the plateau those two bound.
+    """
+    from datetime import timedelta
+
+    points = calibration.sweep(
+        "SEQUENCE_WINDOW", [timedelta(hours=1), timedelta(hours=24), timedelta(days=39)], ANCHOR
+    )
+    assert [p.perfect for p in points] == [False, True, False]
+    assert detections.SEQUENCE_WINDOW == timedelta(hours=24)

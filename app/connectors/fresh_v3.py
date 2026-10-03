@@ -1031,6 +1031,15 @@ def fresh_v3_scenarios() -> tuple:
                     "ANOMALOUS_BEHAVIOR", "v3_owen_radtech",
                     "24 failed logins in ~12 minutes then 180 reads in 40 minutes, against ~3 reads a day of history.",
                 ),
+                # Triage (2026-10-03): the cross-rule sequence stage was built
+                # after the FRESH v3 read and fired here unlabelled. The author's
+                # own description is a staged intrusion, so the truth is
+                # positive. Not part of the quoted reading.
+                ExpectedFinding(
+                    "MULTI_STAGE_SEQUENCE", "v3_owen_radtech",
+                    "Triage after the read: a credential burst and, minutes later, a bulk "
+                    "read of radiology records -- one incident.",
+                ),
             ),
             build=_v3_radiology_failed_burst,
             split=FRESH,

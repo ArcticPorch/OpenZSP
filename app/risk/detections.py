@@ -120,6 +120,24 @@ BULK_READ_RECENT = timedelta(days=7)
 BULK_READ_MIN = 50
 BULK_READ_BASELINE_MULTIPLIER = 3.0
 
+# Cross-rule sequences (`app/risk/sequences.py`): findings from at least this
+# many distinct rules, whose cited events fall within the window of each other,
+# are reported once more as a single multi-stage sequence. 24h is "the same
+# working session or the night after it"; bounded on TRAIN by staged_intrusion
+# (two hours apart) and same_findings_weeks_apart (38 days apart).
+SEQUENCE_WINDOW = timedelta(hours=24)
+SEQUENCE_MIN_STAGES = 2
+
+# Cold start: an identity first seen (its earliest event or earliest grant)
+# less than this many days ago has no history to be unusual against. A
+# baseline rule still raises the finding, at a confidence the reporting floor
+# suppresses -- a coverage gap, not an all-clear. Age counts from the earliest
+# evidence the identity existed, so a long-dormant account that suddenly reads
+# in bulk is *not* new and gets no grace. Calibrated on TRAIN (2026-10-03):
+# the telematics ingest (4 days old, backfilling) must be held back; ruairi
+# (onboarded 42 days ago, then a burst) must fire. Midpoint of (4, 42].
+COLD_START_DAYS = 23
+
 # How far the engine walks the graph for each identity (a hop is one grant or
 # governs edge; stepping into a role is free), and the longest route the
 # attack-path rule considers. **Compute bounds, not detection thresholds**
@@ -232,6 +250,18 @@ def _exercised(ctx: RuleContext) -> set[tuple[str, EventAction]]:
 def _is_exercised(perm, exercised: set[tuple[str, EventAction]]) -> bool:
     permitted = GRANT_EXERCISED_BY.get(perm.action, set())
     return any((perm.resource_id, act) in exercised for act in permitted)
+
+
+def _identity_age_days(ctx: RuleContext) -> Optional[float]:
+    """
+    Days since the earliest evidence this identity existed: its first event or
+    its oldest grant, whichever came first. None when there is neither.
+    """
+    starts = [e.timestamp for e in ctx.past_events()]
+    starts += [p.granted_at for p in ctx.identity.permissions if p.granted_at is not None]
+    if not starts:
+        return None
+    return (ctx.evaluation_time - min(starts)).total_seconds() / 86400.0
 
 
 def _median_activity_gap_days(ctx: RuleContext) -> tuple[Optional[float], int]:
@@ -731,12 +761,16 @@ class StandingSecretAccess:
     a "read-only" identity ends up holding the database password, the cloud
     root key and the signing key.
 
-    Known limit: the engine sees the store, not the path. A service reading
-    only its own secret and a human able to read every secret look identical
-    here, which is why this rule is gated to HIGH+ stores rather than all.
+    **v2 reads the grant's scope** (2026-10-03, user decision). v1 saw the
+    store, not the path: a service reading only its own secret and a human able
+    to read every secret looked identical. A grant with a `scope`
+    ("kv/route-api/*") is how every workload reads its own secrets, and firing
+    on those would flood; a grant with no scope covers the whole store and
+    still fires. Admin on a store is the privilege rules' finding, scoped or
+    not. `whole_vault_read` vs `path_scoped_vault_read` is the pair.
     """
 
-    rule_id = "standing_secret_access.v1"
+    rule_id = "standing_secret_access.v2"
     factor_type = RiskFactorType.EXCESSIVE_PRIVILEGE
 
     def evaluate(self, ctx: RuleContext) -> RuleOutcome:
@@ -744,6 +778,8 @@ class StandingSecretAccess:
         for perm in ctx.identity.permissions:
             if not perm.is_standing or perm.action is Capability.AUTHENTICATE:
                 continue
+            if perm.scope is not None:
+                continue  # its own path in the store, not the store
             res = ctx.resource(perm.resource_id)
             if (
                 res is not None
@@ -1047,9 +1083,16 @@ class BulkReadBurst:
     fires on volume alone. Never understating access applies to reads too: a
     brand-new principal pulling fifty rows of customer data an hour is worth a
     look, not a free pass.
+
+    **v2 adds a cold-start grace** (user decision, 2026-10-03). An identity
+    first seen less than `COLD_START_DAYS` ago cannot be judged against its own
+    history because it has none -- a new integration's initial backfill is the
+    shape (svc_helpdesk_sync). The finding is still raised, with confidence
+    scaled by `scoring.COLD_START_CONFIDENCE_FACTOR` so the floor suppresses
+    it: carried as a coverage gap, never silently dropped.
     """
 
-    rule_id = "bulk_read_burst.v1"
+    rule_id = "bulk_read_burst.v2"
     factor_type = RiskFactorType.ANOMALOUS_BEHAVIOR
 
     def evaluate(self, ctx: RuleContext) -> RuleOutcome:
@@ -1072,15 +1115,21 @@ class BulkReadBurst:
         if baseline and len(burst) < BULK_READ_BASELINE_MULTIPLIER * baseline:
             return RuleOutcome.no_finding()
 
+        confidence = confidence_from_coverage(ctx.coverage)
+        age = _identity_age_days(ctx)
+        cold = age is not None and age < COLD_START_DAYS
+        if cold:
+            confidence *= scoring.COLD_START_CONFIDENCE_FACTOR
         return RuleOutcome(
             fired=True,
             subject=_identity_subject(ctx),
             impact=8.5,
             likelihood=7.0,
-            confidence=confidence_from_coverage(ctx.coverage),
+            confidence=confidence,
             description=(
                 f"{len(burst)} reads of high-value data inside one hour; this "
                 f"identity's busiest hour before this week was {baseline}."
+                + (f" First seen {age:.0f} days ago: too new to have a baseline." if cold else "")
             ),
             recommendation=(
                 "Confirm the export was sanctioned; check where the data went and "
@@ -1468,9 +1517,24 @@ class PeerAccessOutlier:
 
     Declines when there are too few other holders to form a peer group. A
     resource held by one other person says nothing about who it belongs to.
+
+    **v2 (2026-10-03, user decisions)** changes who counts as a peer and as
+    "your department":
+
+    * **Same identity type only.** A Data Engineering ETL account reading the
+      Finance ledger beside four Finance analysts is an integration, not an
+      outlier; its peers are other service accounts, and with too few of them
+      the rule declines. `etl_service_among_finance_staff` vs
+      `marketing_bot_among_billing_services` is the pair.
+    * **Families, not strings.** With an `org_path` from the source
+      ("Clinical/Biostatistics"), holders who share the top-level unit are the
+      same family, so an adjacent team is not an outsider. Without a path the
+      flat department is the family, exactly as v1 behaved -- so
+      treasury_analyst (HOLDOUT), whose data has no path, is unchanged.
+      `biostatistician_on_trial_master` vs `marketer_on_trial_master`.
     """
 
-    rule_id = "peer_access_outlier.v1"
+    rule_id = "peer_access_outlier.v2"
     factor_type = RiskFactorType.CONTEXT_MISMATCH
 
     def evaluate(self, ctx: RuleContext) -> RuleOutcome:
@@ -1485,17 +1549,22 @@ class PeerAccessOutlier:
             res = ctx.resource(perm.resource_id)
             if res is None or res.sensitivity not in PRIVILEGED_SENSITIVITIES:
                 continue
-            others = ctx.peers.other_holders(perm.resource_id, ctx.identity.id)
+            kind = ctx.identity.identity_type.value
+            others = [
+                h for h in ctx.peers.others(perm.resource_id, ctx.identity.id)
+                if h.identity_type == kind
+            ]
             if len(others) < PEER_MIN_OTHER_HOLDERS:
                 continue
-            same = sum(1 for _, dept in others if dept == ctx.identity.department)
+            family = ctx.identity.org_family
+            same = sum(1 for h in others if h.family == family)
             if same / len(others) <= PEER_MAX_SAME_DEPT_SHARE:
                 hits.append(perm)
                 if not detail:
-                    usual = Counter(dept for _, dept in others).most_common(1)[0][0]
+                    usual = Counter(h.family for h in others).most_common(1)[0][0]
                     detail = (
-                        f"{len(others)} others hold {perm.resource_id}, {same} in "
-                        f"{ctx.identity.department}; most are in {usual}."
+                        f"{len(others)} other {kind} holder(s) of {perm.resource_id}, "
+                        f"{same} in {family}; most are in {usual}."
                     )
 
         if not hits:

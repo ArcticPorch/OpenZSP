@@ -13,6 +13,7 @@ from typing import Optional, Sequence
 from app.common.validation import validate_tz_datetime
 from app.graph.effective import effective_reach
 from app.graph.graph import IdentityGraph
+from app.evidence.models import RecordKind
 from app.models.identity import Identity, IdentityType
 from app.risk.baselines import PeerBaseline
 from app.risk.coverage import CoverageAnalyzer, CoverageSummary, EvidenceIndex
@@ -21,7 +22,7 @@ from app.risk.detections import ALL_RULES
 from app.risk.features import FeatureExtractor
 from app.risk.models import RiskAssessment, RiskFactorAssessment
 from app.risk.rules import Rule, RuleContext, RuleOutcome
-from app.risk import scoring
+from app.risk import scoring, sequences
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,7 @@ class RiskEngine:
         reported: list[RiskFactorAssessment] = []
         suppressed: list[RiskFactorAssessment] = []
         errors: list[tuple[str, str]] = []
+        staged: list[tuple[str, RiskFactorAssessment]] = []
 
         for rule in self.rules:
             # A rule must not raise, but the engine must survive one that does:
@@ -116,8 +118,27 @@ class RiskEngine:
             assessment = outcome.to_assessment(rule.rule_id, rule.factor_type)
             if scoring.is_reportable(assessment.confidence):
                 reported.append(assessment)
+                staged.append((rule.rule_id, assessment))
             else:
                 suppressed.append(assessment)
+
+        # The sequence stage reads what the rules reported, never the reverse:
+        # rules stay blind to each other. Time comes from the events a finding
+        # cites, so it needs the evidence index; without one there is nothing
+        # to put on a timeline.
+        if index is not None:
+            event_times = {
+                eid: e.timestamp
+                for e in ctx.events
+                for eid in index.evidence_ids_for(RecordKind.ACTIVITY_EVENT, e.id)
+            }
+            outcome = sequences.correlate(staged, event_times)
+            if outcome is not None:
+                assessment = outcome.to_assessment(sequences.RULE_ID, sequences.FACTOR_TYPE)
+                if scoring.is_reportable(assessment.confidence):
+                    reported.append(assessment)
+                else:
+                    suppressed.append(assessment)
 
         reported = self._dedupe(reported)
         overall = scoring.aggregate_risk(reported)

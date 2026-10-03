@@ -26,9 +26,18 @@ are in Marketing".
 """
 
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Iterable, NamedTuple, Optional
 
 from app.models.identity import Identity, IdentityType
+
+
+class Holder(NamedTuple):
+    """One holder of a resource, as the peer comparison sees them."""
+
+    identity_id: str
+    department: str
+    family: str  # top-level org unit; the department when no path is known
+    identity_type: str
 
 
 @dataclass(frozen=True)
@@ -36,17 +45,16 @@ class PeerBaseline:
     """
     For every resource, who holds a grant on it and which department they are in.
 
-    `holders` maps resource id -> ((identity_id, department), ...), sorted so two
-    builds over the same estate are equal. Every lifecycle counts as holding:
-    a JIT-eligible Finance analyst is still evidence that the ledger belongs to
-    Finance.
+    `holders` maps resource id -> (Holder, ...), sorted so two builds over the
+    same estate are equal. Every lifecycle counts as holding: a JIT-eligible
+    Finance analyst is still evidence that the ledger belongs to Finance.
     """
 
-    holders: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = ()
+    holders: tuple[tuple[str, tuple[Holder, ...]], ...] = ()
 
     @classmethod
     def build(cls, identities: Iterable[Identity]) -> "PeerBaseline":
-        by_resource: dict[str, set[tuple[str, str]]] = {}
+        by_resource: dict[str, set[Holder]] = {}
         for identity in identities:
             # A role is not a colleague. Its department is whoever owns it,
             # and anyone who can assume it holds its grants, so counting it
@@ -55,7 +63,8 @@ class PeerBaseline:
                 continue
             for perm in identity.permissions:
                 by_resource.setdefault(perm.resource_id, set()).add(
-                    (identity.id, identity.department)
+                    Holder(identity.id, identity.department, identity.org_family,
+                           identity.identity_type.value)
                 )
         return cls(
             holders=tuple(
@@ -67,10 +76,14 @@ class PeerBaseline:
         self, resource_id: str, identity_id: str
     ) -> tuple[tuple[str, str], ...]:
         """(identity_id, department) of everyone else holding this resource."""
-        members = self._lookup().get(resource_id, ())
-        return tuple(m for m in members if m[0] != identity_id)
+        return tuple((h.identity_id, h.department) for h in self.others(resource_id, identity_id))
 
-    def _lookup(self) -> dict[str, tuple[tuple[str, str], ...]]:
+    def others(self, resource_id: str, identity_id: str) -> tuple[Holder, ...]:
+        """Everyone else holding this resource, with family and identity type."""
+        members = self._lookup().get(resource_id, ())
+        return tuple(m for m in members if m.identity_id != identity_id)
+
+    def _lookup(self) -> dict[str, tuple[Holder, ...]]:
         # Frozen dataclass: cache the dict view on first use without mutating
         # any declared field, so equality and hashing stay content-based.
         cached: Optional[dict] = self.__dict__.get("_index")

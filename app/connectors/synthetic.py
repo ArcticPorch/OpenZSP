@@ -1958,6 +1958,269 @@ def _quarterly_grant_mid_cycle(b: EvidenceBuilder, rng: random.Random) -> list[E
     )
 
 
+def _parental_leave(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: six weeks of parental leave, not dormancy.
+
+    An architect who works in the building-model repository every week for two
+    years has been on leave for 45 days. Her identity and her grants are quiet,
+    and both are fine: leave is not offboarding. This is the case that bounds
+    the dormancy floor from below -- a floor short enough to fire here would
+    page someone about every holiday -- and it binds both rules that stand on
+    the floor, identity dormancy and abandoned grants.
+    """
+    out = [
+        b.identity("tobias", "Tobias Lindgren", "human", "Architecture Studio"),
+        b.resource("bim_model_repo", "Building Information Model Repository", "repository", "high"),
+        b.resource("site_survey_db", "Site Survey Database", "database", "medium"),
+        b.grant("g_tobias_bim", "tobias", "bim_model_repo", "write", granted_at=b.ago(days=760)),
+        b.grant("g_tobias_survey", "tobias", "site_survey_db", "read", granted_at=b.ago(days=760)),
+    ]
+    for i, day in enumerate(range(45, 750, 7)):
+        out.append(b.event(f"e_tobias_bim_{i}", "tobias", "bim_model_repo", "write",
+                           b.ago(days=day, hours=10)))
+        out.append(b.event(f"e_tobias_survey_{i}", "tobias", "site_survey_db", "read",
+                           b.ago(days=day, hours=11)))
+    return out
+
+
+def _new_integration_backfill(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: a telematics integration connected four days ago,
+    backfilling a year of trips.
+
+    Thousands of reads of HIGH driver data in an hour, from an identity that
+    has existed for four days. There is no history to be unusual against, so
+    "unusual for this identity" cannot be judged: the honest outcome is a
+    suppressed finding -- a coverage gap -- not an alert. The shape FRESH v2's
+    svc_helpdesk_sync exposed, written in another domain.
+    """
+    out = [
+        b.identity("svc_telematics_ingest", "telematics-ingest", "service", "Usage-Based Insurance"),
+        b.resource("driver_trips_db", "Driver Trips Database", "database", "high"),
+        b.grant("g_telematics_trips", "svc_telematics_ingest", "driver_trips_db", "read",
+                granted_at=b.ago(days=4)),
+    ]
+    out += _read_burst(b, "svc_telematics_ingest", "driver_trips_db", "backfill", 300,
+                       b.ago(days=3, hours=6), 55)
+    return out
+
+
+def _contractor_burst_after_onboarding(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Six weeks in, a pricing contractor pulls the policyholder table.
+
+    Onboarded 42 days ago, ruairi has read a few policyholder records every
+    working day since -- a real, if short, baseline. Then 400 reads in under an
+    hour. Young, but not too young to be judged: the grace period is for
+    identities with no history, not a free first month.
+    """
+    out = [
+        b.identity("ruairi", "Ruairi Byrne", "human", "Pricing Analytics"),
+        b.resource("policyholder_records", "Policyholder Records", "database", "high"),
+        b.resource("quote_engine_logs", "Quote Engine Logs", "database", "low"),
+        b.grant("g_ruairi_policy", "ruairi", "policyholder_records", "read",
+                granted_at=b.ago(days=42)),
+        b.grant("g_ruairi_logs", "ruairi", "quote_engine_logs", "read",
+                granted_at=b.ago(days=42)),
+    ]
+    for day in range(8, 42):
+        for k in range(3):
+            out.append(b.event(f"e_ruairi_read_{day}_{k}", "ruairi", "policyholder_records",
+                               "read", b.ago(days=day, hours=10 - k)))
+        out.append(b.event(f"e_ruairi_logs_{day}", "ruairi", "quote_engine_logs", "read",
+                           b.ago(days=day, hours=14)))
+    out += _read_burst(b, "ruairi", "policyholder_records", "pull", 400, b.ago(days=2, hours=21), 50)
+    return out
+
+
+def _resource_with_holders(
+    b: EvidenceBuilder,
+    resource: tuple[str, str, str],
+    holders: tuple[tuple[str, str, str, str, Optional[str]], ...],
+) -> list[Evidence]:
+    """
+    One HIGH resource and the identities holding standing read on it, each
+    reading it weekly so no staleness rule has anything to say.
+
+    holders: (id, name, identity_type, department, org_path or None)
+    """
+    res_id, res_name, res_type = resource
+    out = [b.resource(res_id, res_name, res_type, "high")]
+    for who_id, who_name, kind, dept, org_path in holders:
+        extra = {"org_path": org_path} if org_path else {}
+        out.append(b.identity(who_id, who_name, kind, dept, **extra))
+        out.append(b.grant(f"g_{who_id}_{res_id}", who_id, res_id, "read",
+                           granted_at=b.ago(days=300)))
+        for i, day in enumerate(range(1, 60, 7)):
+            out.append(b.event(f"e_{who_id}_{res_id}_{i}", who_id, res_id, "read",
+                               b.ago(days=day, hours=11)))
+    return out
+
+
+def _trial_ops_team(prefix: str) -> tuple:
+    return tuple(
+        (f"{prefix}_trialops_{i}", f"Trial Ops {i} ({prefix})", "human",
+         "Trial Operations", "Clinical/Trial Operations")
+        for i in range(4)
+    )
+
+
+def _biostatistician_on_trial_master(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: a biostatistician on the trial master file.
+
+    Four trial-operations staff hold the file; the biostatistician is the only
+    holder from "Biostatistics". As flat strings that is a minority of zero --
+    v1 fired. The org path says both teams are Clinical: adjacent work, not an
+    outsider. Pairs with `marketer_on_trial_master`; only the org path differs.
+    """
+    return _resource_with_holders(
+        b, ("trial_master_file", "Trial Master File", "database"),
+        _trial_ops_team("tmf") + (
+            ("priyanka", "Priyanka Rao", "human", "Biostatistics", "Clinical/Biostatistics"),
+        ),
+    )
+
+
+def _marketer_on_trial_master(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    The same file, the same four holders, and a brand marketer.
+
+    The org path puts her in Commercial, a different family from every other
+    holder: the outlier the peer rule exists to find, now told apart from the
+    adjacent team by data rather than by string luck.
+    """
+    return _resource_with_holders(
+        b, ("trial_master_file_eu", "Trial Master File (EU)", "database"),
+        _trial_ops_team("tmfeu") + (
+            ("hugo_t", "Hugo Tanaka", "human", "Brand Marketing", "Commercial/Brand Marketing"),
+        ),
+    )
+
+
+def _etl_service_among_finance_staff(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: a Data Engineering ETL account on the GL close ledger.
+
+    Four Finance analysts hold the ledger; the only service account reading it
+    belongs to Data Engineering. Compared with people, it is a 0-of-4 outlier
+    and v1 fired. Compared with its peers -- other service accounts -- there is
+    no peer group at all, so there is nothing to be an outlier from.
+    """
+    return _resource_with_holders(
+        b, ("gl_close_ledger", "GL Close Ledger", "database"),
+        tuple((f"gl_analyst_{i}", f"GL Analyst {i}", "human", "Finance", None) for i in range(4))
+        + (("svc_finance_etl", "finance-etl", "service", "Data Engineering", None),),
+    )
+
+
+def _marketing_bot_among_billing_services(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    A Marketing-owned bot among the billing ledger's service accounts.
+
+    Four service accounts owned by Billing Engineering read the core billing
+    ledger; a campaign bot owned by Marketing reads it too. Among its own kind
+    it is the only one from another family: a real outlier.
+    """
+    return _resource_with_holders(
+        b, ("billing_ledger_core", "Core Billing Ledger", "database"),
+        tuple((f"svc_billing_job_{i}", f"billing-job-{i}", "service", "Billing Engineering", None)
+              for i in range(4))
+        + (("svc_campaign_bot", "campaign-bot", "service", "Marketing", None),),
+    )
+
+
+def _vault_reader(b: EvidenceBuilder, who: tuple[str, str], vault: tuple[str, str],
+                  scope: Optional[str]) -> list[Evidence]:
+    """A dispatch-platform service with standing read on a HIGH vault, used daily."""
+    who_id, who_name = who
+    vault_id, vault_name = vault
+    extra = {"scope": scope} if scope else {}
+    out = [
+        b.identity(who_id, who_name, "service", "Dispatch Platform"),
+        b.resource(vault_id, vault_name, "secret_store", "high"),
+        b.grant(f"g_{who_id}_vault", who_id, vault_id, "read", granted_at=b.ago(days=500), **extra),
+    ]
+    for day in range(0, 30):
+        out.append(b.event(f"e_{who_id}_secret_{day}", who_id, vault_id, "read",
+                           b.ago(days=day, hours=3)))
+    return out
+
+
+def _whole_vault_read(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    A dispatch worker that can read every secret in the platform vault.
+
+    It needs one credential; it holds read on the whole store -- every other
+    service's database passwords and API keys included. Compromise it and you
+    are all of them.
+    """
+    return _vault_reader(b, ("svc_dispatch_worker", "dispatch-worker"),
+                         ("dispatch_vault", "Dispatch Platform Vault"), None)
+
+
+def _path_scoped_vault_read(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: the same read, scoped to the service's own path.
+
+    Pairs with `whole_vault_read`; only the grant's scope differs. This is how
+    every workload in a well-run estate reads its own secrets, and a rule that
+    fires on it pages someone about every service.
+    """
+    return _vault_reader(b, ("svc_routing_api", "routing-api"),
+                         ("routing_vault", "Routing Platform Vault"), "kv/routing-api/*")
+
+
+def _two_incidents(b: EvidenceBuilder, who: tuple[str, str], sso: str, db: str,
+                   failures_days_ago: float, pull_days_ago: float) -> list[Evidence]:
+    """
+    An established member-services analyst: months of light, steady reading,
+    then a burst of failed logins and, separately timed, a bulk read of the
+    HIGH member ledger. Only the gap between the two differs between the pair.
+    """
+    who_id, who_name = who
+    out = [
+        b.identity(who_id, who_name, "human", "Member Services"),
+        b.resource(sso, f"SSO ({who_id})", "api", "medium"),
+        b.resource(db, f"Member Ledger ({who_id})", "database", "high"),
+        b.grant(f"g_{who_id}_sso", who_id, sso, "authenticate", granted_at=b.ago(days=600)),
+        b.grant(f"g_{who_id}_db", who_id, db, "read", granted_at=b.ago(days=600)),
+    ]
+    for day in range(8, 120, 2):
+        out.append(b.event(f"e_{who_id}_login_{day}", who_id, sso, "login", b.ago(days=day, hours=15)))
+        out.append(b.event(f"e_{who_id}_read_{day}", who_id, db, "read", b.ago(days=day, hours=14)))
+    for i in range(8):
+        out.append(b.event(f"e_{who_id}_fail_{i}", who_id, sso, "login",
+                           b.ago(days=failures_days_ago, minutes=-i * 2), success=False))
+    out.append(b.event(f"e_{who_id}_ok", who_id, sso, "login",
+                       b.ago(days=failures_days_ago, minutes=-20)))
+    out += _read_burst(b, who_id, db, "pull", 200, b.ago(days=pull_days_ago), 50)
+    return out
+
+
+def _staged_intrusion(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Eight failed logins, a success, and two hours later 200 reads of the member
+    ledger. Two rules see their own pieces; together they are one incident --
+    a guessed or stuffed credential, then the data.
+    """
+    return _two_incidents(b, ("kasimir", "Kasimir Wolanski"), "kasimir_sso", "member_ledger_db",
+                          failures_days_ago=2.0, pull_days_ago=2.0 - 2 / 24)
+
+
+def _same_findings_weeks_apart(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: the same two findings, 38 days apart.
+
+    A forgotten password in August and a bulk read this week. Each is still its
+    own finding; nothing ties them into one incident. Pairs with
+    `staged_intrusion`; only the gap differs.
+    """
+    return _two_incidents(b, ("leopold", "Leopold Varga"), "leopold_sso", "claims_history_db",
+                          failures_days_ago=40.0, pull_days_ago=2.0)
+
+
 def _unmapped_capability_grants(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
     """
     A source whose action vocabulary this taxonomy does not understand.
@@ -3913,6 +4176,166 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_quarterly_grant_mid_cycle,
+    ),
+    Scenario(
+        name="parental_leave",
+        description="Negative control: a weekly-rhythm architect on six weeks' leave.",
+        expected=(
+            ExpectedFinding(
+                "STALE_ACCESS",
+                "tobias",
+                "45 days quiet after two years of weekly work: leave, not dormancy or "
+                "abandonment. Bounds the dormancy floor from below.",
+                should_fire=False,
+            ),
+        ),
+        build=_parental_leave,
+    ),
+    Scenario(
+        name="new_integration_backfill",
+        description="Negative control: a 4-day-old integration backfilling a year of trips.",
+        expected=(
+            ExpectedFinding(
+                "ANOMALOUS_BEHAVIOR",
+                "svc_telematics_ingest",
+                "An initial backfill by an identity four days old: no history to be "
+                "unusual against. Must be held back as a coverage gap, not reported.",
+                should_fire=False,
+            ),
+        ),
+        build=_new_integration_backfill,
+    ),
+    Scenario(
+        name="contractor_burst_after_onboarding",
+        description="A contractor six weeks in, with a daily baseline, then 400 reads in an hour.",
+        expected=(
+            ExpectedFinding(
+                "ANOMALOUS_BEHAVIOR",
+                "ruairi",
+                "Six weeks of three reads a day, then 400 in under an hour: young, but "
+                "with a baseline, and far outside it.",
+            ),
+        ),
+        build=_contractor_burst_after_onboarding,
+    ),
+    Scenario(
+        name="biostatistician_on_trial_master",
+        description="Negative control: an adjacent clinical team on the trial master file.",
+        expected=(
+            ExpectedFinding(
+                "CONTEXT_MISMATCH",
+                "priyanka",
+                "Biostatistics and Trial Operations are both Clinical (org path): an "
+                "adjacent team, not an outsider.",
+                should_fire=False,
+            ),
+        ),
+        build=_biostatistician_on_trial_master,
+    ),
+    Scenario(
+        name="marketer_on_trial_master",
+        description="A brand marketer on a trial master file held only by Clinical staff.",
+        expected=(
+            ExpectedFinding(
+                "CONTEXT_MISMATCH",
+                "hugo_t",
+                "Commercial among four Clinical holders: a different family from "
+                "everyone else who holds the file.",
+            ),
+        ),
+        build=_marketer_on_trial_master,
+    ),
+    Scenario(
+        name="etl_service_among_finance_staff",
+        description="Negative control: an ETL service account beside four Finance analysts.",
+        expected=(
+            ExpectedFinding(
+                "CONTEXT_MISMATCH",
+                "svc_finance_etl",
+                "Its peers are service accounts, and it has none on this ledger: an "
+                "integration is not an outlier among people.",
+                should_fire=False,
+            ),
+        ),
+        build=_etl_service_among_finance_staff,
+    ),
+    Scenario(
+        name="marketing_bot_among_billing_services",
+        description="A Marketing bot among four Billing Engineering service accounts.",
+        expected=(
+            ExpectedFinding(
+                "CONTEXT_MISMATCH",
+                "svc_campaign_bot",
+                "The only service account from outside Billing Engineering on the core "
+                "billing ledger.",
+            ),
+        ),
+        build=_marketing_bot_among_billing_services,
+    ),
+    Scenario(
+        name="whole_vault_read",
+        description="A service with standing read on every secret in a HIGH vault.",
+        expected=(
+            ExpectedFinding(
+                "EXCESSIVE_PRIVILEGE",
+                "svc_dispatch_worker",
+                "Unscoped standing read on the whole platform vault: every other "
+                "service's credentials, to fetch one of its own.",
+            ),
+        ),
+        build=_whole_vault_read,
+    ),
+    Scenario(
+        name="path_scoped_vault_read",
+        description="Negative control: the same read, scoped to the service's own path.",
+        expected=(
+            ExpectedFinding(
+                "EXCESSIVE_PRIVILEGE",
+                "svc_routing_api",
+                "Standing read on its own secret path only: how every workload reads "
+                "its credentials, not excessive privilege.",
+                should_fire=False,
+            ),
+        ),
+        build=_path_scoped_vault_read,
+    ),
+    Scenario(
+        name="staged_intrusion",
+        description="Failed-login burst, success, then a bulk read two hours later.",
+        expected=(
+            ExpectedFinding(
+                "MULTI_STAGE_SEQUENCE",
+                "kasimir",
+                "A credential burst and a bulk read of member data within two hours: "
+                "one incident, seen by two rules.",
+            ),
+            ExpectedFinding(
+                "ANOMALOUS_BEHAVIOR",
+                "kasimir",
+                "Eight failed logins in a quarter-hour, and 200 ledger reads in an hour "
+                "against a history of one an hour.",
+            ),
+        ),
+        build=_staged_intrusion,
+    ),
+    Scenario(
+        name="same_findings_weeks_apart",
+        description="Negative control: the same two findings, 38 days apart.",
+        expected=(
+            ExpectedFinding(
+                "MULTI_STAGE_SEQUENCE",
+                "leopold",
+                "A forgotten password in one month and a bulk read in the next are two "
+                "findings, not one incident.",
+                should_fire=False,
+            ),
+            ExpectedFinding(
+                "ANOMALOUS_BEHAVIOR",
+                "leopold",
+                "Each burst is still unusual on its own.",
+            ),
+        ),
+        build=_same_findings_weeks_apart,
     ),
     Scenario(
         name="unmapped_capability_grants",

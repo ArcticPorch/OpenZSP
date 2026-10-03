@@ -45,13 +45,13 @@ connectors → evidence → normalize → models → graph → risk (features ·
 
 ## Detection & calibration — parked
 
-- [ ] Cold-start grace period for baseline rules (+ TRAIN trap)
-- [ ] Hierarchical departments for peer groups
-- [ ] Peer groups by identity type
-- [ ] Secret-path scoping for secret access
-- [ ] Sequence detections across rules
+- [x] Cold-start grace period for baseline rules (+ TRAIN trap) — bulk_read_burst.v2, COLD_START_DAYS 23, suppressed not dropped
+- [x] Hierarchical departments for peer groups — `Identity.org_path` family, flat fallback (peer_access_outlier.v2)
+- [x] Peer groups by identity type — same-type peers only (peer_access_outlier.v2)
+- [x] Secret-path scoping for secret access — `Permission.scope`; standing_secret_access.v2 skips scoped grants
+- [x] Sequence detections across rules — `app/risk/sequences.py`, MULTI_STAGE_SEQUENCE; kasimir / leopold
 - [ ] Blind FRESH set written by someone who hasn't read the rules (FRESH v3 is code-blind only: its author saw CLAUDE.md) — also the first held-out reading of `abandoned_grant.v1`
-- [ ] Bound `DORMANT_IDENTITY_DAYS` from below: a TRAIN trap (e.g. a grant used a few times, quiet ~60 days) before anyone tunes it
+- [x] Bound `DORMANT_IDENTITY_DAYS` from below: tobias (parental leave) — plateau >46–160, 90 kept
 - [x] Tuning-curve charts for README
 
 ## Later — real deployment
