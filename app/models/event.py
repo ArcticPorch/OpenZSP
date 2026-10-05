@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
+from app.common.validation import validate_non_empty_str, validate_tz_datetime
 from app.models.capability import Capability
 
 
@@ -42,6 +43,23 @@ class EventAction(Enum):
         return self.capability.is_privileged
 
 
+class AuthKind(Enum):
+    """
+    How a sign-in happened, when the source can tell.
+
+    `login` alone cannot say whether a person or a pipeline authenticated --
+    FRESH v3's CI deployer read as "a service account used interactively"
+    for exactly that reason. CloudTrail can tell (ConsoleLogin vs an API call
+    with keys); many sources cannot. UNKNOWN is the honest default and is
+    treated like INTERACTIVE wherever it matters: not knowing must never make
+    an identity look safer.
+    """
+
+    INTERACTIVE = "interactive"
+    PROGRAMMATIC = "programmatic"
+    UNKNOWN = "unknown"
+
+
 _EVENT_CAPABILITIES: dict["EventAction", Capability] = {}
 
 
@@ -58,11 +76,30 @@ _EVENT_CAPABILITIES.update(
 )
 
 
-@dataclass
+@dataclass(frozen=True)
 class Event:
+    """
+    One observed action. Frozen and self-validating (2026-10-05); the timestamp
+    must be timezone-aware, so a naive time is rejected where it is made
+    rather than discovered later inside a time window.
+    """
+
     id: str
     identity_id: str
     resource_id: str
     action: EventAction
     timestamp: datetime
     success: bool
+    auth: AuthKind = AuthKind.UNKNOWN
+
+    def __post_init__(self) -> None:
+        validate_non_empty_str(self.id, "id")
+        validate_non_empty_str(self.identity_id, "identity_id")
+        validate_non_empty_str(self.resource_id, "resource_id")
+        if not isinstance(self.action, EventAction):
+            raise TypeError(f"action must be an EventAction, got {type(self.action).__name__}")
+        validate_tz_datetime(self.timestamp, "timestamp")
+        if not isinstance(self.success, bool):
+            raise TypeError(f"success must be a bool, got {type(self.success).__name__}")
+        if not isinstance(self.auth, AuthKind):
+            raise TypeError(f"auth must be an AuthKind, got {type(self.auth).__name__}")

@@ -1,0 +1,22 @@
+[
+  {
+    "level": "root",
+    "policies": [
+      {
+        "Content": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"*\", \"Resource\": \"*\"}]}",
+        "Name": "FullAWSAccess",
+        "PolicyId": "p-FullAWSAccess"
+      }
+    ]
+  },
+  {
+    "level": "ou-workloads",
+    "policies": [
+      {
+        "Content": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"*\", \"Resource\": \"*\"}, {\"Effect\": \"Deny\", \"Action\": [\"cloudtrail:StopLogging\", \"cloudtrail:DeleteTrail\", \"cloudtrail:UpdateTrail\", \"cloudtrail:PutEventSelectors\"], \"Resource\": \"*\"}]}",
+        "Name": "ProtectAuditTrail",
+        "PolicyId": "p-protect-trail"
+      }
+    ]
+  }
+]

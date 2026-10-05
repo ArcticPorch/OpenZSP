@@ -7,7 +7,8 @@ finds the access that makes a breach worse: dormant admin rights, over-broad ser
 permission-granting power held permanently, credential-stuffing bursts followed by escalation.
 It also follows access *through* roles and control planes, so it can show what a compromise would
 actually reach, not just what an identity holds directly. Every finding explains itself, cites the
-evidence that produced it, and states how much that evidence can be trusted.
+evidence that produced it, and states how much that evidence can be trusted. It runs on a labelled
+synthetic corpus for measurement, and on a **real AWS account export** for use.
 
 The name comes from **Zero Standing Privilege**: the idea that nobody should hold dangerous access
 by default, and should instead request it just-in-time. The engine's job is to find the standing
@@ -19,7 +20,7 @@ access worth converting.
   recall        100.0%    100.0%     100.0%      93.8%
   specificity   100.0%     60.0%      77.8%      78.6%
 
-  125 labelled scenarios · 196 labels (115 positive, 81 negative controls) · 21 rules + 1 sequence stage · 430 tests
+  127 labelled scenarios · 198 labels (116 positive, 82 negative controls) · 21 rules + 1 sequence stage · 512 tests
 ```
 
 > **Read these numbers carefully.** TRAIN is where thresholds are tuned, so its 100% is in-sample.
@@ -98,8 +99,50 @@ explanation.
 
 ```
 $ python -m app.main --blast-radius
-  becomes:adjuster_role       becomes  cuts 3: adaeze -> claims_payment_db, bruno -> ..., chiara -> ...
+  adjuster_role =becomes=> role_adjuster      cuts 3: adaeze -> claims_payment_db, bruno -> ..., chiara -> ...
 ```
+
+## Run it on an AWS account
+
+The AWS connector reads the JSON an administrator can export with **read-only** CLI calls; nothing
+is called live, and no credentials ever reach the tool:
+
+```bash
+aws iam get-account-authorization-details > authorization_details.json   # users, groups, roles, policies
+aws resourcegroupstaggingapi get-resources > resources.json              # resources and their tags
+# plus, optionally: SCPs per OU level (scps.json), bucket/key/secret policies (resource_policies.json),
+# and CloudTrail logs as delivered to S3 (cloudtrail.json); see app/connectors/aws/connector.py
+python -m app.main --aws path/to/export
+```
+
+`examples/aws_sample_account/` is a small fictional account in exactly those shapes, so the whole
+thing runs without AWS:
+
+```
+$ python -m app.main --aws examples/aws_sample_account --paths alice
+Routes to crown jewels it holds no grant on (1):
+  s3:acme-payments-ledger  [admin, 2 hops, standing]
+    user/alice -impersonate-> role/DataEngineerRole =becomes=> role/DataEngineerRole -admin-> s3:acme-payments-ledger
+```
+
+What the connector does with an export:
+
+- **Effective permissions, not attached ones.** Identity policies (with groups), resource policies,
+  permission boundaries, every SCP level and explicit deny are evaluated **per action**, so
+  `Allow s3:*` with `Deny s3:DeleteObject` still leaves `s3:DeleteBucket`, and it is no longer admin.
+  A role is assumable only if its trust policy agrees. Each action counts only against the resource
+  types AWS says it can target.
+- **AWS's own classification.** All ~22,000 actions across 455 services come from AWS's
+  machine-readable Service Reference (`tools/build_aws_action_levels.py`), mapped by access level,
+  plus a short documented list where the level understates the harm: `sts:AssumeRole` and
+  `iam:PassRole` mean *becoming someone else*, `cloudtrail:StopLogging` means *blinding the audit trail*.
+- **Uncertainty is shown, not hidden.** An Allow that carries a condition (MFA, source IP) is kept
+  and lowers confidence; a conditional Deny is not trusted to block. An untagged resource gets a
+  documented default sensitivity, and lower confidence too.
+- **The account's IAM is a control plane**, so `iam:AttachUserPolicy` on `*` reaches everything, except
+  what an SCP fences off, since IAM cannot grant past an SCP.
+- **CloudTrail gives behaviour.** Console sign-ins are interactive and access-key calls programmatic,
+  and an action taken through a role is attributed to the user who assumed it.
 
 ## Tuning curves
 
@@ -124,7 +167,8 @@ lie between samples).
 ## How it works
 
 ```
-connectors/   scenario-driven evidence, with trust metadata and two timestamps
+connectors/   scenario-driven evidence, or an AWS account export (effective IAM permissions +
+              CloudTrail), with trust metadata and two timestamps
      ↓
 normalize/    evidence → identities, grants, resources, events (never drops access)
      ↓
@@ -177,6 +221,8 @@ python -m app.main --findings    # every identity's assessment, explained
 python -m app.main --sweep CADENCE_TOLERANCE=1.0,1.25,1.5   # a tuning curve, TRAIN only
 python -m app.main --paths petra    # one identity's routes to crown jewels, as readable chains
 python -m app.main --blast-radius   # identities ranked by reach, then the choke points
+python -m app.main --aws examples/aws_sample_account            # the whole engine on an AWS export
+python -m app.main --aws examples/aws_sample_account --paths eve
 ```
 
 Run everything from the repository root.
@@ -191,8 +237,9 @@ each design decision and the conventions the tests enforce.
 This is a research and learning project in two parts, both measured against labelled data:
 detection engineering with calibration, and identity attack paths with blast radius. The gap the
 latest held-out set exposed (grants used and then abandoned) now has a rule, built on training data
-only; the next fresh held-out set will be the first to measure it. Everything runs on synthetic data;
-there is no connector to a real cloud provider yet.
+only; the next fresh held-out set will be the first to measure it. The measured numbers come from
+synthetic, labelled data; the AWS connector runs the same engine on a real account export, where
+there is no ground truth to score against.
 
 ## License
 

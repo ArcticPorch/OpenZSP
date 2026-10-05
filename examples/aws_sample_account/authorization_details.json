@@ -1,0 +1,428 @@
+{
+  "GroupDetailList": [
+    {
+      "Arn": "arn:aws:iam::111122223333:group/Contractors",
+      "AttachedManagedPolicies": [],
+      "GroupName": "Contractors",
+      "GroupPolicyList": [
+        {
+          "PolicyDocument": {
+            "Statement": [
+              {
+                "Action": "sts:AssumeRole",
+                "Effect": "Allow",
+                "Resource": "arn:aws:iam::111122223333:role/SupportRole"
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "PolicyName": "AssumeSupport"
+        }
+      ]
+    }
+  ],
+  "Policies": [
+    {
+      "Arn": "arn:aws:iam::aws:policy/AdministratorAccess",
+      "DefaultVersionId": "v1",
+      "PolicyName": "AdministratorAccess",
+      "PolicyVersionList": [
+        {
+          "Document": {
+            "Statement": [
+              {
+                "Action": "*",
+                "Effect": "Allow",
+                "Resource": "*"
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "IsDefaultVersion": true,
+          "VersionId": "v1"
+        }
+      ]
+    },
+    {
+      "Arn": "arn:aws:iam::111122223333:policy/ReadOnlyBoundary",
+      "DefaultVersionId": "v1",
+      "PolicyName": "ReadOnlyBoundary",
+      "PolicyVersionList": [
+        {
+          "Document": {
+            "Statement": [
+              {
+                "Action": [
+                  "iam:Get*",
+                  "iam:List*",
+                  "cloudtrail:*",
+                  "s3:Get*",
+                  "s3:List*"
+                ],
+                "Effect": "Allow",
+                "Resource": "*"
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "IsDefaultVersion": true,
+          "VersionId": "v1"
+        }
+      ]
+    }
+  ],
+  "RoleDetailList": [
+    {
+      "Arn": "arn:aws:iam::111122223333:role/DataEngineerRole",
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::111122223333:root"
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "AttachedManagedPolicies": [],
+      "RoleName": "DataEngineerRole",
+      "RolePolicyList": [
+        {
+          "PolicyDocument": {
+            "Statement": [
+              {
+                "Action": "s3:*",
+                "Effect": "Allow",
+                "Resource": [
+                  "arn:aws:s3:::acme-payments-ledger",
+                  "arn:aws:s3:::acme-payments-ledger/*"
+                ]
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "PolicyName": "LedgerAccess"
+        }
+      ],
+      "Tags": []
+    },
+    {
+      "Arn": "arn:aws:iam::111122223333:role/SupportRole",
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::111122223333:root"
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "AttachedManagedPolicies": [],
+      "RoleName": "SupportRole",
+      "RolePolicyList": [
+        {
+          "PolicyDocument": {
+            "Statement": [
+              {
+                "Action": "dynamodb:*",
+                "Effect": "Allow",
+                "Resource": "arn:aws:dynamodb:us-east-1:111122223333:table/customers"
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "PolicyName": "CustomersTable"
+        }
+      ],
+      "Tags": []
+    },
+    {
+      "Arn": "arn:aws:iam::111122223333:role/LambdaExecRole",
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "lambda.amazonaws.com"
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "AttachedManagedPolicies": [],
+      "RoleName": "LambdaExecRole",
+      "RolePolicyList": [
+        {
+          "PolicyDocument": {
+            "Statement": [
+              {
+                "Action": "s3:PutObject",
+                "Effect": "Allow",
+                "Resource": "arn:aws:s3:::acme-analytics-lake/*"
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "PolicyName": "WriteLake"
+        }
+      ],
+      "Tags": []
+    }
+  ],
+  "UserDetailList": [
+    {
+      "Arn": "arn:aws:iam::111122223333:user/ci-deployer",
+      "AttachedManagedPolicies": [
+        {
+          "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess",
+          "PolicyName": "AdministratorAccess"
+        }
+      ],
+      "GroupList": [],
+      "Tags": [
+        {
+          "Key": "zsp:identity-type",
+          "Value": "service"
+        },
+        {
+          "Key": "zsp:department",
+          "Value": "Platform"
+        }
+      ],
+      "UserName": "ci-deployer",
+      "UserPolicyList": []
+    },
+    {
+      "Arn": "arn:aws:iam::111122223333:user/alice",
+      "AttachedManagedPolicies": [],
+      "GroupList": [],
+      "Tags": [
+        {
+          "Key": "zsp:department",
+          "Value": "Data Analytics"
+        },
+        {
+          "Key": "zsp:org-path",
+          "Value": "Data/Analytics"
+        }
+      ],
+      "UserName": "alice",
+      "UserPolicyList": [
+        {
+          "PolicyDocument": {
+            "Statement": [
+              {
+                "Action": [
+                  "s3:GetObject",
+                  "s3:ListBucket"
+                ],
+                "Effect": "Allow",
+                "Resource": [
+                  "arn:aws:s3:::acme-analytics-lake",
+                  "arn:aws:s3:::acme-analytics-lake/*"
+                ]
+              },
+              {
+                "Action": "sts:AssumeRole",
+                "Effect": "Allow",
+                "Resource": "arn:aws:iam::111122223333:role/DataEngineerRole"
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "PolicyName": "AnalyticsAccess"
+        }
+      ]
+    },
+    {
+      "Arn": "arn:aws:iam::111122223333:user/eve",
+      "AttachedManagedPolicies": [],
+      "GroupList": [
+        "Contractors"
+      ],
+      "Tags": [
+        {
+          "Key": "zsp:department",
+          "Value": "Outsourced Support"
+        },
+        {
+          "Key": "zsp:external",
+          "Value": "true"
+        }
+      ],
+      "UserName": "eve",
+      "UserPolicyList": []
+    },
+    {
+      "Arn": "arn:aws:iam::111122223333:user/bob",
+      "AttachedManagedPolicies": [],
+      "GroupList": [],
+      "PermissionsBoundary": {
+        "PermissionsBoundaryArn": "arn:aws:iam::111122223333:policy/ReadOnlyBoundary",
+        "PermissionsBoundaryType": "Policy"
+      },
+      "Tags": [
+        {
+          "Key": "zsp:department",
+          "Value": "Platform"
+        },
+        {
+          "Key": "zsp:org-path",
+          "Value": "Engineering/Platform"
+        }
+      ],
+      "UserName": "bob",
+      "UserPolicyList": [
+        {
+          "PolicyDocument": {
+            "Statement": [
+              {
+                "Action": "iam:*",
+                "Effect": "Allow",
+                "Resource": "*"
+              },
+              {
+                "Action": "cloudtrail:*",
+                "Effect": "Allow",
+                "Resource": "*"
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "PolicyName": "PlatformAdmin"
+        }
+      ]
+    },
+    {
+      "Arn": "arn:aws:iam::111122223333:user/carol",
+      "AttachedManagedPolicies": [],
+      "GroupList": [],
+      "Tags": [
+        {
+          "Key": "zsp:department",
+          "Value": "Finance"
+        },
+        {
+          "Key": "zsp:org-path",
+          "Value": "Finance/Treasury"
+        }
+      ],
+      "UserName": "carol",
+      "UserPolicyList": [
+        {
+          "PolicyDocument": {
+            "Statement": [
+              {
+                "Action": "s3:*",
+                "Condition": {
+                  "Bool": {
+                    "aws:MultiFactorAuthPresent": "true"
+                  }
+                },
+                "Effect": "Allow",
+                "Resource": [
+                  "arn:aws:s3:::acme-payments-ledger",
+                  "arn:aws:s3:::acme-payments-ledger/*"
+                ]
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "PolicyName": "LedgerWithMFA"
+        }
+      ]
+    },
+    {
+      "Arn": "arn:aws:iam::111122223333:user/svc-reporting",
+      "AttachedManagedPolicies": [],
+      "GroupList": [],
+      "Tags": [
+        {
+          "Key": "zsp:identity-type",
+          "Value": "service"
+        },
+        {
+          "Key": "zsp:department",
+          "Value": "Finance"
+        }
+      ],
+      "UserName": "svc-reporting",
+      "UserPolicyList": [
+        {
+          "PolicyDocument": {
+            "Statement": [
+              {
+                "Action": "secretsmanager:GetSecretValue",
+                "Effect": "Allow",
+                "Resource": "*"
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "PolicyName": "ReadSecrets"
+        }
+      ]
+    },
+    {
+      "Arn": "arn:aws:iam::111122223333:user/breakglass",
+      "AttachedManagedPolicies": [
+        {
+          "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess",
+          "PolicyName": "AdministratorAccess"
+        }
+      ],
+      "GroupList": [],
+      "Tags": [
+        {
+          "Key": "zsp:break-glass",
+          "Value": "true"
+        },
+        {
+          "Key": "zsp:department",
+          "Value": "Security"
+        }
+      ],
+      "UserName": "breakglass",
+      "UserPolicyList": []
+    },
+    {
+      "Arn": "arn:aws:iam::111122223333:user/old-intern",
+      "AttachedManagedPolicies": [],
+      "GroupList": [],
+      "Tags": [
+        {
+          "Key": "zsp:department",
+          "Value": "Marketing"
+        }
+      ],
+      "UserName": "old-intern",
+      "UserPolicyList": [
+        {
+          "PolicyDocument": {
+            "Statement": [
+              {
+                "Action": [
+                  "s3:GetObject",
+                  "s3:ListBucket"
+                ],
+                "Effect": "Allow",
+                "Resource": [
+                  "arn:aws:s3:::acme-marketing-assets",
+                  "arn:aws:s3:::acme-marketing-assets/*"
+                ]
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "PolicyName": "MarketingRead"
+        }
+      ]
+    }
+  ]
+}

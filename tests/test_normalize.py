@@ -241,7 +241,7 @@ def test_naive_timestamp_in_payload_becomes_an_issue():
             grant_ev(payload={"granted_at": "2026-09-01T00:00:00"}),  # no offset
         ]
     )
-    assert estate.identities[0].permissions == []
+    assert estate.identities[0].permissions == ()
     assert any("timezone-aware" in i.reason for i in estate.issues)
 
 
@@ -250,7 +250,7 @@ def test_permission_invariant_violation_becomes_an_issue():
     estate = normalize(
         [identity_ev(), resource_ev(), grant_ev(payload={"lifecycle": "time_bound"})]
     )
-    assert estate.identities[0].permissions == []
+    assert estate.identities[0].permissions == ()
     assert any("expires_at" in i.reason for i in estate.issues)
 
 
@@ -263,10 +263,24 @@ def test_one_bad_record_does_not_sink_the_batch():
     assert len(estate.issues) == 1
 
 
-def test_policy_documents_are_reported_as_unsupported():
-    doc = ev(RecordKind.POLICY_DOCUMENT, {"resource_id": "db"}, {"document": "{}"})
+def test_policy_documents_are_kept_as_citations():
+    """The connector resolves them; the normalizer keeps them for findings to cite."""
+    doc = ev(RecordKind.POLICY_DOCUMENT, {"policy_id": "pol-admin"}, {"document": "{}"})
     estate = normalize([doc])
-    assert "resolution layer" in estate.issues[0].reason
+    assert estate.issues == ()
+    assert estate.evidence_ids_for(RecordKind.POLICY_DOCUMENT, "pol-admin") == (doc.id,)
+
+
+def test_a_grant_cites_the_policies_it_was_derived_from():
+    doc = ev(RecordKind.POLICY_DOCUMENT, {"policy_id": "pol-admin"}, {"document": "{}"})
+    g = grant_ev(payload={"derived_from": ["pol-admin"]})
+    estate = normalize([identity_ev(), resource_ev(), g, doc])
+    assert estate.evidence_ids_for(RecordKind.PERMISSION_GRANT, "g1") == (g.id, doc.id)
+
+
+def test_a_policy_document_without_an_id_is_an_issue():
+    doc = ev(RecordKind.POLICY_DOCUMENT, {"resource_id": "db"}, {"document": "{}"})
+    assert "policy_id" in normalize([doc]).issues[0].reason
 
 
 # --- Dangling references ---

@@ -7,6 +7,7 @@ shape of the output and that it agrees with those functions.
 
 import re
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -61,7 +62,9 @@ def test_blast_radius_ends_with_the_choke_points(estate):
     out = format_blast_radius(estate, ANCHOR)
     choke = out.split("Choke points")[1]
     first = choke.splitlines()[2]
-    assert first.split()[0] in {"becomes:adjuster_role", "g_role_adjuster_payments"}
+    # Edges read as sentences: the role's link, or the role's grant on the jewel.
+    assert first.strip().startswith(("adjuster_role =becomes=> role_adjuster",
+                                     "role_adjuster -admin-> claims_payment_db"))
     assert "cuts 3: adaeze -> claims_payment_db" in first
 
 
@@ -79,3 +82,26 @@ def test_cli_unknown_identity_exits_2(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["app.main", "--paths", "nobody"])
     assert cli.main() == 2
     assert "unknown identity 'nobody'" in capsys.readouterr().err
+
+
+# --- AWS export ----------------------------------------------------------------
+
+SAMPLE = str(Path(__file__).resolve().parent.parent / "examples" / "aws_sample_account")
+
+
+def test_cli_runs_the_engine_on_an_aws_export(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["app.main", "--aws", SAMPLE])
+    assert cli.main() == 0
+    out = capsys.readouterr().out
+    assert "AWS account 111122223333" in out and "0 normalization issue(s)" in out
+    assert "user/ci-deployer" in out and "Choke points" in out
+    assert "arn:aws:iam::" not in out  # labels are shortened for reading
+
+
+def test_cli_explains_one_aws_identity_by_name(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["app.main", "--aws", SAMPLE, "--paths", "alice"])
+    assert cli.main() == 0
+    out = capsys.readouterr().out
+    assert "user/alice -impersonate-> role/DataEngineerRole" in out
+    monkeypatch.setattr(sys, "argv", ["app.main", "--aws", SAMPLE, "--paths", "nobody"])
+    assert cli.main() == 2

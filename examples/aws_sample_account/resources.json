@@ -1,0 +1,103 @@
+{
+  "ResourceTagMappingList": [
+    {
+      "ResourceARN": "arn:aws:s3:::acme-payments-ledger",
+      "Tags": [
+        {
+          "Key": "zsp:sensitivity",
+          "Value": "critical"
+        },
+        {
+          "Key": "Name",
+          "Value": "payments-ledger"
+        }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:s3:::acme-analytics-lake",
+      "Tags": [
+        {
+          "Key": "zsp:sensitivity",
+          "Value": "medium"
+        },
+        {
+          "Key": "Name",
+          "Value": "analytics-lake"
+        }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:s3:::acme-marketing-assets",
+      "Tags": [
+        {
+          "Key": "zsp:sensitivity",
+          "Value": "low"
+        },
+        {
+          "Key": "Name",
+          "Value": "marketing-assets"
+        }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:dynamodb:us-east-1:111122223333:table/customers",
+      "Tags": [
+        {
+          "Key": "zsp:sensitivity",
+          "Value": "critical"
+        },
+        {
+          "Key": "Name",
+          "Value": "customers"
+        }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:secretsmanager:us-east-1:111122223333:secret:prod/db-password-AbCdEf",
+      "Tags": []
+    },
+    {
+      "ResourceARN": "arn:aws:secretsmanager:us-east-1:111122223333:secret:prod/stripe-key-XyZ123",
+      "Tags": []
+    },
+    {
+      "ResourceARN": "arn:aws:kms:us-east-1:111122223333:key/1111aaaa-2222-bbbb-3333-cccc4444dddd",
+      "Tags": [
+        {
+          "Key": "zsp:sensitivity",
+          "Value": "critical"
+        },
+        {
+          "Key": "Name",
+          "Value": "payments-key"
+        }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:lambda:us-east-1:111122223333:function:payments-api",
+      "Tags": [
+        {
+          "Key": "zsp:sensitivity",
+          "Value": "medium"
+        },
+        {
+          "Key": "Name",
+          "Value": "payments-api"
+        }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:cloudtrail:us-east-1:111122223333:trail/org-trail",
+      "Tags": [
+        {
+          "Key": "zsp:sensitivity",
+          "Value": "critical"
+        },
+        {
+          "Key": "Name",
+          "Value": "org-trail"
+        }
+      ]
+    }
+  ]
+}

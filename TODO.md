@@ -56,11 +56,11 @@ connectors → evidence → normalize → models → graph → risk (features ·
 
 ## Later — real deployment
 
-- [ ] Event auth kind (interactive vs programmatic) — `login` cannot tell a person from a pipeline (FRESH v3 CI deployer)
+- [x] Event auth kind (interactive vs programmatic) — `Event.auth`; service_account_interactive_login.v2 ignores programmatic; unknown counts
 
-- [ ] AWS connector (IAM Service Authorization Reference mapping)
-- [ ] Effective-permission evaluation (policies, boundaries, SCPs, conditions)
-- [ ] Freeze + self-validate `Identity`, `Resource`, `Event`
+- [x] AWS connector (IAM Service Authorization Reference mapping) — offline exports; table generated from AWS's Service Reference; `--aws`; sample account
+- [x] Effective-permission evaluation (policies, boundaries, SCPs, conditions) — per action, resource-type aware, trust policies; conditions kept at lower confidence
+- [x] Freeze + self-validate `Identity`, `Resource`, `Event`
 
 ## Out of scope
 

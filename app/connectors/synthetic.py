@@ -2221,6 +2221,48 @@ def _same_findings_weeks_apart(b: EvidenceBuilder, rng: random.Random) -> list[E
                           failures_days_ago=40.0, pull_days_ago=2.0)
 
 
+def _service_with_logins(b: EvidenceBuilder, who: tuple[str, str], api: tuple[str, str],
+                         auth: str) -> list[Evidence]:
+    """A publishing-platform service account signing in to its API daily for three weeks."""
+    who_id, who_name = who
+    api_id, api_name = api
+    out = [
+        b.identity(who_id, who_name, "service", "Publishing Platform"),
+        b.resource(api_id, api_name, "api", "medium"),
+        b.grant(f"g_{who_id}_api", who_id, api_id, "write", granted_at=b.ago(days=300)),
+    ]
+    for day in range(1, 22):
+        out.append(b.event(f"e_{who_id}_login_{day}", who_id, api_id, "login",
+                           b.ago(days=day, hours=9), auth=auth))
+        out.append(b.event(f"e_{who_id}_write_{day}", who_id, api_id, "write",
+                           b.ago(days=day, hours=8)))
+    return out
+
+
+def _scheduler_console_logins(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    A print-scheduling service account whose credential staff sign in with.
+
+    Twenty-one console sign-ins, recorded as interactive. The account is a key
+    for a job, and people are wearing it: every action it takes is now
+    unattributable.
+    """
+    return _service_with_logins(b, ("svc_print_scheduler", "print-scheduler"),
+                                ("print_queue_api", "Print Queue API"), "interactive")
+
+
+def _release_pipeline_token_logins(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
+    """
+    Negative control: the same daily sign-ins, recorded as programmatic.
+
+    Pairs with `scheduler_console_logins`; only the recorded auth kind
+    differs. A release pipeline authenticating with its token every day is
+    exactly what a service account is for.
+    """
+    return _service_with_logins(b, ("svc_ebook_pipeline", "ebook-pipeline"),
+                                ("ebook_build_api", "E-book Build API"), "programmatic")
+
+
 def _unmapped_capability_grants(b: EvidenceBuilder, rng: random.Random) -> list[Evidence]:
     """
     A source whose action vocabulary this taxonomy does not understand.
@@ -4336,6 +4378,33 @@ SCENARIOS: tuple[Scenario, ...] = (
             ),
         ),
         build=_same_findings_weeks_apart,
+    ),
+    Scenario(
+        name="scheduler_console_logins",
+        description="A service account whose credential staff sign in with, interactively.",
+        expected=(
+            ExpectedFinding(
+                "CONTEXT_MISMATCH",
+                "svc_print_scheduler",
+                "Twenty-one interactive sign-ins on a service account: people are "
+                "wearing its credential.",
+            ),
+        ),
+        build=_scheduler_console_logins,
+    ),
+    Scenario(
+        name="release_pipeline_token_logins",
+        description="Negative control: the same daily sign-ins, recorded as programmatic.",
+        expected=(
+            ExpectedFinding(
+                "CONTEXT_MISMATCH",
+                "svc_ebook_pipeline",
+                "A pipeline authenticating with its token is what a service account "
+                "is for.",
+                should_fire=False,
+            ),
+        ),
+        build=_release_pipeline_token_logins,
     ),
     Scenario(
         name="unmapped_capability_grants",

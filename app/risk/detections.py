@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from statistics import median
 from typing import Callable, Optional
 
-from app.models.event import Event, EventAction
+from app.models.event import AuthKind, Event, EventAction
 from app.models.capability import (
     PERMISSION_ALTERING_CAPABILITIES,
     PRIVILEGED_CAPABILITIES,
@@ -1473,9 +1473,16 @@ class ServiceAccountInteractiveLogin:
     Service accounts use keys, not sessions. Repeated successful logins usually
     mean a human is wearing the credential, which destroys attribution for
     everything that principal subsequently does.
+
+    **v2 reads `Event.auth`** (2026-10-05). A login the source marks
+    PROGRAMMATIC is a pipeline authenticating with its key, which is what a
+    service account is for, so it no longer counts. UNKNOWN still counts: a
+    source that cannot tell must not make an identity look safer, so FRESH
+    v3's CI deployer -- whose data carries no flag -- is unchanged.
+    `release_pipeline_token_logins` vs `scheduler_console_logins`.
     """
 
-    rule_id = "service_account_interactive_login.v1"
+    rule_id = "service_account_interactive_login.v2"
     factor_type = RiskFactorType.CONTEXT_MISMATCH
 
     def evaluate(self, ctx: RuleContext) -> RuleOutcome:
@@ -1485,7 +1492,8 @@ class ServiceAccountInteractiveLogin:
             return RuleOutcome.no_finding()
 
         logins = [
-            e for e in ctx.past_events() if e.action is EventAction.LOGIN and e.success
+            e for e in ctx.past_events()
+            if e.action is EventAction.LOGIN and e.success and e.auth is not AuthKind.PROGRAMMATIC
         ]
         if len(logins) < INTERACTIVE_LOGIN_THRESHOLD:
             return RuleOutcome.no_finding()
@@ -1497,7 +1505,12 @@ class ServiceAccountInteractiveLogin:
             likelihood=7.0,
             confidence=confidence_from_coverage(ctx.coverage),
             description=(
-                f"{len(logins)} successful interactive logins by a service identity."
+                f"{len(logins)} successful interactive logins by a service identity"
+                + (
+                    f" ({sum(1 for e in logins if e.auth is AuthKind.UNKNOWN)} with no "
+                    "auth kind recorded, counted as interactive)."
+                    if any(e.auth is AuthKind.UNKNOWN for e in logins) else "."
+                )
             ),
             recommendation="Move to key-based auth and find out who is using the credential.",
             evidence_ids=_cite_events(ctx, logins),

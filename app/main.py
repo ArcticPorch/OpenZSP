@@ -11,6 +11,8 @@ CLI entry point: run the pipeline over the labelled corpus and report quality.
     ./venv/Scripts/python.exe -m app.main --curves docs/tuning_curves.svg  # README chart
     ./venv/Scripts/python.exe -m app.main --paths petra   # one identity's routes and reach
     ./venv/Scripts/python.exe -m app.main --blast-radius  # ranked reach + choke points
+    ./venv/Scripts/python.exe -m app.main --aws examples/aws_sample_account          # an AWS export
+    ./venv/Scripts/python.exe -m app.main --aws examples/aws_sample_account --paths alice
 """
 
 import sys
@@ -27,9 +29,9 @@ from app.risk.evaluation import compare_splits, evaluate, format_report
 ANCHOR = datetime(2026, 9, 9, 0, 0, 0, tzinfo=timezone.utc)
 
 
-def show_findings() -> None:
-    estate = _estate()
-    results = RiskEngine().assess_estate(estate, ANCHOR)
+def show_findings(estate=None, at=ANCHOR) -> None:
+    estate = estate if estate is not None else _estate()
+    results = RiskEngine().assess_estate(estate, at)
     for result in sorted(results, key=lambda r: -r.assessment.overall_score):
         a = result.assessment
         if not a.triggered_factors and not result.suppressed:
@@ -88,6 +90,47 @@ def show_blast_radius() -> int:
     return 0
 
 
+def show_aws(export_dir: str, paths_for: str = None) -> int:
+    """
+    Run the whole engine on an AWS account export (see app/connectors/aws).
+    Evaluated at the export's own timestamp, so results never depend on when
+    the command is run.
+    """
+    import contextlib
+    import io
+
+    from app.connectors.aws.connector import AWSExportConnector, short_arn, shorten_arns
+    from app.risk.graph_report import format_blast_radius, format_paths
+
+    connector = AWSExportConnector(export_dir)
+    estate = Normalizer().normalize(connector.collect())
+    at = connector.exported_at
+    short = shorten_arns
+
+    if paths_for is not None:
+        wanted = next(
+            (i.id for i in estate.identities if paths_for in (i.id, i.name)), None
+        )
+        if wanted is None:
+            print(f"unknown identity {paths_for!r}", file=sys.stderr)
+            return 2
+        print(format_paths(estate, wanted, at, label=short_arn))
+        return 0
+
+    grants = sum(len(i.permissions) for i in estate.identities)
+    print(f"AWS account {connector.account_id}, exported {at.isoformat()}")
+    print(f"{len(estate.identities)} principals, {len(estate.resources)} resources, "
+          f"{grants} effective grants, {len(estate.events)} CloudTrail events, "
+          f"{len(estate.issues)} normalization issue(s)")
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        show_findings(estate, at)
+    print(short(buffer.getvalue()))
+    print()
+    print(format_blast_radius(estate, at, top=10, label=short_arn))
+    return 0
+
+
 def write_curves(path: str) -> None:
     """Render the TRAIN-only tuning curves to an SVG file (used by the README)."""
     from pathlib import Path
@@ -101,6 +144,17 @@ def write_curves(path: str) -> None:
 
 
 def main() -> int:
+    if "--aws" in sys.argv:
+        idx = sys.argv.index("--aws")
+        if idx + 1 >= len(sys.argv):
+            raise SystemExit("usage: --aws <export dir> [--paths <identity>]")
+        paths_for = None
+        if "--paths" in sys.argv:
+            p = sys.argv.index("--paths")
+            if p + 1 >= len(sys.argv):
+                raise SystemExit("usage: --aws <export dir> --paths <identity>")
+            paths_for = sys.argv[p + 1]
+        return show_aws(sys.argv[idx + 1], paths_for)
     if "--paths" in sys.argv:
         idx = sys.argv.index("--paths")
         if idx + 1 >= len(sys.argv):

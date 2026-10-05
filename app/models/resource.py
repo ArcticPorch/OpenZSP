@@ -1,6 +1,10 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
+
+from app.common.validation import validate_non_empty_str
+
+
 class ResourceType(Enum):
     DATABASE = "database"
     REPOSITORY = "repository"
@@ -43,8 +47,10 @@ class Sensitivity(Enum):
     CRITICAL = "critical"
 
 
-@dataclass
+@dataclass(frozen=True)
 class Resource:
+    """A thing access is granted on. Frozen and self-validating (2026-10-05)."""
+
     id: str
     name: str
     resource_type: ResourceType
@@ -65,6 +71,25 @@ class Resource:
     # guessed -- guessing "everything" gives every IAM admin the same maximal
     # reach and makes reach useless for ranking.
     governs: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_non_empty_str(self.id, "id")
+        validate_non_empty_str(self.name, "name")
+        for value, enum_cls, name in (
+            (self.resource_type, ResourceType, "resource_type"),
+            (self.sensitivity, Sensitivity, "sensitivity"),
+            (self.exposure, Exposure, "exposure"),
+        ):
+            if not isinstance(value, enum_cls):
+                raise TypeError(f"{name} must be a {enum_cls.__name__}, got {type(value).__name__}")
+        if self.principal_id is not None:
+            validate_non_empty_str(self.principal_id, "principal_id")
+        if not isinstance(self.governs, (list, tuple)):
+            raise TypeError(f"governs must be a sequence, got {type(self.governs).__name__}")
+        governs = tuple(self.governs)
+        for governed in governs:
+            validate_non_empty_str(governed, "governs[]")
+        object.__setattr__(self, "governs", governs)
 
     @property
     def is_assumable(self) -> bool:

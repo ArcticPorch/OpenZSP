@@ -1,0 +1,13 @@
+{
+  "arn:aws:s3:::acme-marketing-assets": {
+    "Statement": [
+      {
+        "Action": "s3:GetObject",
+        "Effect": "Allow",
+        "Principal": "*",
+        "Resource": "arn:aws:s3:::acme-marketing-assets/*"
+      }
+    ],
+    "Version": "2012-10-17"
+  }
+}

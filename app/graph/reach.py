@@ -70,21 +70,32 @@ def hops(path: tuple[Edge, ...]) -> int:
     return sum(1 for edge in path if edge.kind is not EdgeKind.BECOMES)
 
 
-def describe_path(origin: str, path: tuple[Edge, ...]) -> str:
+def describe_path(origin: str, path: tuple[Edge, ...], label=lambda node_id: node_id) -> str:
     """
     A path as a reader follows it: who, which grant, which step, where.
 
         petra -impersonate-> helpdesk_tier2_role =becomes=> role_helpdesk_tier2 -admin-> support_crm_db
+
+    `label` renders an id for display (the CLI shortens AWS ARNs); it never
+    changes what the path is.
     """
-    out = [origin]
+    out = [label(origin)]
     for edge in path:
-        if edge.kind is EdgeKind.GRANT:
-            out.append(f"-{edge.permission.action.value}-> {edge.target.id}")
-        elif edge.kind is EdgeKind.BECOMES:
-            out.append(f"=becomes=> {edge.target.id}")
-        else:
-            out.append(f"~governs~> {edge.target.id}")
+        out.append(f"{_arrow(edge)} {label(edge.target.id)}")
     return " ".join(out)
+
+
+def describe_edge(edge: Edge, label=lambda node_id: node_id) -> str:
+    """One edge as a reader would say it: `alice -impersonate-> deploy_role`."""
+    return f"{label(edge.source.id)} {_arrow(edge)} {label(edge.target.id)}"
+
+
+def _arrow(edge: Edge) -> str:
+    if edge.kind is EdgeKind.GRANT:
+        return f"-{edge.permission.action.value}->"
+    if edge.kind is EdgeKind.BECOMES:
+        return "=becomes=>"
+    return "~governs~>"
 
 
 @dataclass(frozen=True)

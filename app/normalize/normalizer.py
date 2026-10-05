@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Any, Iterable, Optional
 
 from app.evidence.models import Evidence, RecordKind
-from app.models.event import Event, EventAction
+from app.models.event import AuthKind, Event, EventAction
 from app.models.identity import Identity, IdentityType
 from app.models.capability import Capability
 from app.models.permission import GrantLifecycle, Permission
@@ -140,6 +140,17 @@ def _str_tuple(payload: dict[str, Any], key: str) -> tuple[str, ...]:
     return tuple(sorted(set(raw)))
 
 
+def _validated(build):
+    """
+    Domain objects validate themselves; a record that fails that validation is
+    an issue, never an exception that sinks the batch.
+    """
+    try:
+        return build()
+    except (ValueError, TypeError) as exc:
+        raise _RecordError(str(exc))
+
+
 def _parse_bool(raw: Any, field_name: str) -> bool:
     if not isinstance(raw, bool):
         raise _RecordError(f"{field_name} must be a boolean, got {type(raw).__name__}")
@@ -209,6 +220,16 @@ class Normalizer:
                 continue
             record_provenance(RecordKind.RESOURCE, entity_id, group)
 
+        # -- Policy documents --
+        # Resolved by the connector that read them (IAM's semantics live with
+        # the AWS connector); here they are kept as citations. A grant naming
+        # the policies it was derived from (`derived_from`) carries their
+        # evidence in its provenance, so a finding cites "admin, via this policy".
+        for policy_id, group in self._group(
+            buckets[RecordKind.POLICY_DOCUMENT], "policy_id", issues
+        ):
+            record_provenance(RecordKind.POLICY_DOCUMENT, policy_id, group)
+
         # -- Permissions (grouped per identity) --
         grants_by_identity: dict[str, list[Permission]] = {}
         for entity_id, group in self._group(
@@ -238,6 +259,12 @@ class Normalizer:
                 )
             grants_by_identity.setdefault(perm.identity_id, []).append(perm)
             record_provenance(RecordKind.PERMISSION_GRANT, entity_id, group)
+            derived = win.payload_dict().get("derived_from", ())
+            if isinstance(derived, (list, tuple)):
+                for policy_id in derived:
+                    for policy_ev in provenance.get((RecordKind.POLICY_DOCUMENT, policy_id), ()):
+                        if policy_ev not in provenance[(RecordKind.PERMISSION_GRANT, entity_id)]:
+                            provenance[(RecordKind.PERMISSION_GRANT, entity_id)].append(policy_ev)
 
         # -- Identities --
         identities: dict[str, Identity] = {}
@@ -305,14 +332,6 @@ class Normalizer:
                 continue
             record_provenance(RecordKind.ACTIVITY_EVENT, entity_id, group)
 
-        for ev in buckets[RecordKind.POLICY_DOCUMENT]:
-            issues.append(
-                NormalizationIssue(
-                    ev.id,
-                    RecordKind.POLICY_DOCUMENT,
-                    "policy documents require the resolution layer, which is not implemented",
-                )
-            )
 
         return Estate(
             identities=tuple(identities[k] for k in sorted(identities)),
@@ -349,7 +368,7 @@ class Normalizer:
         identity_id: str, ev: Evidence, permissions: list[Permission]
     ) -> Identity:
         p = ev.payload_dict()
-        return Identity(
+        return _validated(lambda: Identity(
             id=identity_id,
             name=_require(p, "name"),
             identity_type=_parse_enum(IdentityType, _require(p, "identity_type"), "identity_type"),
@@ -363,12 +382,12 @@ class Normalizer:
             permissions=permissions,
             # Optional: no org path means only the flat department is known.
             org_path=_optional_str(p, "org_path"),
-        )
+        ))
 
     @staticmethod
     def _build_resource(resource_id: str, ev: Evidence) -> Resource:
         p = ev.payload_dict()
-        return Resource(
+        return _validated(lambda: Resource(
             id=resource_id,
             name=_require(p, "name"),
             resource_type=_parse_enum(ResourceType, _require(p, "resource_type"), "resource_type"),
@@ -379,7 +398,7 @@ class Normalizer:
             # Optional: most resources are not principals.
             principal_id=_optional_str(p, "principal_id"),
             governs=_str_tuple(p, "governs"),
-        )
+        ))
 
     @staticmethod
     def _build_permission(grant_id: str, ev: Evidence) -> Permission:
@@ -414,7 +433,7 @@ class Normalizer:
     def _build_event(event_id: str, ev: Evidence) -> Event:
         p = ev.payload_dict()
         refs = ev.references_dict()
-        return Event(
+        return _validated(lambda: Event(
             id=event_id,
             identity_id=_require_ref(refs, "identity_id"),
             resource_id=_require_ref(refs, "resource_id"),
@@ -425,4 +444,7 @@ class Normalizer:
             # recency window at once.
             timestamp=ev.observed_at,
             success=_parse_bool(_require(p, "success"), "success"),
-        )
+            # Optional: a source that cannot tell how a sign-in happened says
+            # nothing, which reads as UNKNOWN -- treated like interactive.
+            auth=_parse_enum(AuthKind, p.get("auth", "unknown"), "auth"),
+        ))

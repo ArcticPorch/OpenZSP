@@ -1,8 +1,11 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from app.common.validation import validate_non_empty_str
 from app.models.permission import Permission
+
+
 class IdentityType(Enum):
     HUMAN = "human"
     SERVICE = "service"
@@ -12,8 +15,27 @@ class IdentityType(Enum):
     # like any identity, which is what makes access paths multi-hop.
     ROLE = "role"
 
-@dataclass
+
+def _validate_bool(val, name: str) -> None:
+    if not isinstance(val, bool):
+        raise TypeError(f"{name} must be a bool, got {type(val).__name__}")
+
+
+def _validate_optional_str(val, name: str) -> None:
+    if val is not None:
+        validate_non_empty_str(val, name)
+
+
+@dataclass(frozen=True)
 class Identity:
+    """
+    A principal, as one source of record describes it.
+
+    Frozen and self-validating, like `Permission` (2026-10-05): every field is
+    checked on construction, and `permissions` is a tuple. A domain object an
+    analysis could mutate mid-run is one whose findings cannot be reproduced.
+    """
+
     id: str
     name: str
     identity_type: IdentityType
@@ -29,12 +51,37 @@ class Identity:
     # still standing admin, and a tag anyone could set must not be able to
     # hide that. The tag is input, not proof.
     is_break_glass: bool = False
-    permissions: list["Permission"] = field(default_factory=list)
+    # Any sequence is accepted and stored as a tuple, so the identity is
+    # immutable and hashable like the rest of the domain.
+    permissions: tuple[Permission, ...] = ()
     # Where the identity sits in the organisation, as an HR feed supplies it:
     # "Finance/Treasury". Optional; without it the flat department is all we
     # know. Departments are free text, so "Treasury" and "Accounts Payable"
     # look unrelated -- the path says they are both Finance.
     org_path: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        validate_non_empty_str(self.id, "id")
+        validate_non_empty_str(self.name, "name")
+        if not isinstance(self.identity_type, IdentityType):
+            raise TypeError(
+                f"identity_type must be an IdentityType, got {type(self.identity_type).__name__}"
+            )
+        validate_non_empty_str(self.department, "department")
+        _validate_bool(self.is_external, "is_external")
+        _validate_bool(self.is_break_glass, "is_break_glass")
+        _validate_optional_str(self.org_path, "org_path")
+        if not isinstance(self.permissions, (list, tuple)):
+            raise TypeError(
+                f"permissions must be a sequence, got {type(self.permissions).__name__}"
+            )
+        perms = tuple(self.permissions)
+        for perm in perms:
+            if not isinstance(perm, Permission):
+                raise TypeError(f"permissions must hold Permission, got {type(perm).__name__}")
+            if perm.identity_id != self.id:
+                raise ValueError(f"grant {perm.id} belongs to '{perm.identity_id}', not '{self.id}'")
+        object.__setattr__(self, "permissions", perms)
 
     @property
     def org_family(self) -> str:
