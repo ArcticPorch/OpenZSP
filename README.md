@@ -7,8 +7,9 @@ finds the access that makes a breach worse: dormant admin rights, over-broad ser
 permission-granting power held permanently, credential-stuffing bursts followed by escalation.
 It also follows access *through* roles and control planes, so it can show what a compromise would
 actually reach, not just what an identity holds directly. Every finding explains itself, cites the
-evidence that produced it, and states how much that evidence can be trusted. It runs on a labelled
-synthetic corpus for measurement, and on a **real AWS account export** for use.
+evidence that produced it, and states how much that evidence can be trusted. It is measured on a
+labelled synthetic corpus, and it reads **AWS account exports** (tested on a sample account; see
+[Limitations](#limitations)).
 
 The name comes from **Zero Standing Privilege**: the idea that nobody should hold dangerous access
 by default, and should instead request it just-in-time. The engine's job is to find the standing
@@ -20,7 +21,7 @@ access worth converting.
   recall        100.0%    100.0%     100.0%      93.8%
   specificity   100.0%     60.0%      77.8%      78.6%
 
-  127 labelled scenarios · 198 labels (116 positive, 82 negative controls) · 21 rules + 1 sequence stage · 512 tests
+  127 labelled scenarios · 198 labels (116 positive, 82 negative controls) · 21 rules + 1 sequence stage · 516 tests
 ```
 
 > **Read these numbers carefully.** TRAIN is where thresholds are tuned, so its 100% is in-sample.
@@ -109,7 +110,9 @@ is called live, and no credentials ever reach the tool:
 
 ```bash
 aws iam get-account-authorization-details > authorization_details.json   # users, groups, roles, policies
-aws resourcegroupstaggingapi get-resources > resources.json              # resources and their tags
+aws configservice select-resource-config \
+    --expression "SELECT arn, resourceType, tags" > config_resources.json  # every resource Config records
+aws resourcegroupstaggingapi get-resources > resources.json              # tags (tagged resources only)
 # plus, optionally: SCPs per OU level (scps.json), bucket/key/secret policies (resource_policies.json),
 # and CloudTrail logs as delivered to S3 (cloudtrail.json); see app/connectors/aws/connector.py
 python -m app.main --aws path/to/export
@@ -141,6 +144,9 @@ What the connector does with an export:
   documented default sensitivity, and lower confidence too.
 - **The account's IAM is a control plane**, so `iam:AttachUserPolicy` on `*` reaches everything, except
   what an SCP fences off, since IAM cannot grant past an SCP.
+- **No resource is invisible.** The resource list is AWS Config's inventory, plus the tagging API,
+  plus every exact ARN a policy names. Each source alone misses resources, and a resource nobody
+  lists is access nobody evaluates.
 - **CloudTrail gives behaviour.** Console sign-ins are interactive and access-key calls programmatic,
   and an action taken through a role is attributed to the user who assumed it.
 
@@ -149,7 +155,7 @@ What the connector does with an export:
 Every threshold was calibrated against the training split only. Each panel sweeps one threshold
 and counts the training labels the engine gets wrong at each value. The shaded band is the range
 where every label is right. The value in use sits inside that band, away from its edges, so one
-new scenario can't tip it over.
+new scenario can't tip it over. The chart shows the first five; the table lists all of them.
 
 ![Tuning curves: training-label errors as each calibrated threshold varies](docs/tuning_curves.svg)
 
@@ -160,6 +166,10 @@ new scenario can't tip it over.
 | `PEER_MAX_SAME_DEPT_SHARE` | 0 – 0.175 | 0.1 | marketing admin on payments | on-call SREs on billing |
 | `MIN_REPORTING_CONFIDENCE` | 0.1 – 0.55 | 0.35 | dead connector | partially visible source |
 | `BULK_READ_BASELINE_MULTIPLIER` | 1.7 – 6.5 | 3 | nightly ETL growth | weekly report → bulk pull |
+| `DORMANT_IDENTITY_DAYS` | 47 – 160 | 90 | six weeks' parental leave | quarterly job that stopped |
+| `COLD_START_DAYS` | 5 – 42 | 23 | a 4-day-old integration's backfill | a contractor six weeks in |
+| `BLAST_RADIUS_MIN_RESOURCES` | 3 – 4 | 4 | one role chain to one crown jewel | a four-system agent sprawl |
+| `SEQUENCE_WINDOW` | ~2 h – 38 days | 24 h | credential burst, bulk read 2 h later | the same two findings weeks apart |
 
 Regenerate with `python -m app.main --curves docs/tuning_curves.svg` (sampled values; exact edges
 lie between samples).
@@ -227,6 +237,27 @@ python -m app.main --aws examples/aws_sample_account --paths eve
 
 Run everything from the repository root.
 
+## Limitations
+
+Stated plainly, so nothing here claims more than it shows:
+
+- **The AWS connector is tested on a fictional sample account** and on unit tests of IAM's rules
+  (explicit deny, boundaries, SCP levels, trust policies, NotAction/NotPrincipal). It has not yet
+  run on a production account, nor been compared with AWS's own policy evaluation (IAM Policy
+  Simulator, Access Analyzer).
+- **Not modelled:** cross-account access, session policies, VPC endpoint policies, and IAM Identity
+  Center permission sets. Policy **conditions are not evaluated**: a conditional Allow is kept at
+  lower confidence, and a conditional Deny is not trusted to block.
+- **Untagged resources get a default sensitivity** (secrets and keys HIGH, everything else MEDIUM),
+  shown as lower confidence. Tags (`zsp:sensitivity`) fix it.
+- **SCPs and resource policies** have to be assembled from several AWS calls into the two small
+  files described in `app/connectors/aws/connector.py`.
+- **Scale is untested.** Every principal is checked against every resource, which is instant for a
+  small account and unmeasured for thousands of resources.
+- **The measured numbers are synthetic.** The latest held-out set was written by an author who never
+  opened the detection code but had read the project notes, so it is code-blind, not fully blind.
+  A held-out set written by someone who has never seen the project is still to do.
+
 ## Learn more
 
 **[CLAUDE.md](CLAUDE.md)** documents the architecture layer by layer, with the reasoning behind
@@ -234,12 +265,11 @@ each design decision and the conventions the tests enforce.
 
 ## Status
 
-This is a research and learning project in two parts, both measured against labelled data:
-detection engineering with calibration, and identity attack paths with blast radius. The gap the
-latest held-out set exposed (grants used and then abandoned) now has a rule, built on training data
-only; the next fresh held-out set will be the first to measure it. The measured numbers come from
-synthetic, labelled data; the AWS connector runs the same engine on a real account export, where
-there is no ground truth to score against.
+A research and learning project in two parts, both measured against labelled data: detection
+engineering with calibration, and identity attack paths with blast radius, plus an AWS connector
+that runs the same engine on an account export. The gap the latest held-out set exposed (grants
+used and then abandoned) now has a rule built on training data only; the next fresh held-out set
+would be the first to measure it.
 
 ## License
 

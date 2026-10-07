@@ -6,13 +6,22 @@ reading the JSON an administrator can produce with read-only CLI calls:
     authorization_details.json aws iam get-account-authorization-details
     scps.json                  [{"level": "root", "policies": [{"PolicyId", "Name", "Content"}]}, ...]
                                (aws organizations list-policies-for-target + describe-policy, per level)
-    resources.json             aws resourcegroupstaggingapi get-resources
+    config_resources.json      aws configservice select-resource-config --expression
+                               "SELECT arn, resourceType, tags"   (every resource Config records)
+    resources.json             aws resourcegroupstaggingapi get-resources   (tags; tagged resources only)
     resource_policies.json     {"<resource arn>": <policy document>}  (bucket, key, secret policies)
     cloudtrail.json            CloudTrail {"Records": [...]} as delivered to S3
 
 Only `manifest.json` and `authorization_details.json` are required. Nothing is
 called live: no credentials in the tool, no dependency, and the same export
 always yields the same evidence.
+
+**The resource list is the union of three sources**, because each alone misses
+resources and a resource nobody lists is access nobody evaluates -- the
+understatement this engine must not make. AWS Config sees everything it
+records, tagged or not; the tagging API carries tags but returns only resources
+that have (or had) tags; and every exact ARN a policy names is added too, so a
+resource referenced in a policy is never invisible even with no inventory file.
 
 Mapping decisions (agreed with the user, 2026-10-05):
 
@@ -110,10 +119,37 @@ def _load(path: Path, default=None):
 
 
 def _tags(raw) -> dict[str, str]:
-    """AWS tags arrive as [{"Key","Value"}]; accept a plain dict too."""
+    """
+    AWS tags arrive as [{"Key","Value"}] (IAM, tagging API) or [{"key","value"}]
+    (AWS Config); accept a plain dict too.
+    """
     if isinstance(raw, dict):
         return {str(k).lower(): str(v) for k, v in raw.items()}
-    return {str(t.get("Key", "")).lower(): str(t.get("Value", "")) for t in raw or ()}
+    return {
+        str(t.get("Key", t.get("key", ""))).lower(): str(t.get("Value", t.get("value", "")))
+        for t in raw or ()
+    }
+
+
+def _referenced_arns(statements, account_id: str) -> set[str]:
+    """
+    Exact resource ARNs named in policies, in this account (or account-less,
+    like S3). `bucket/*` names the bucket. IAM ARNs are principals and
+    policies, not resources, and are left out; wildcards name no one resource.
+    """
+    out: set[str] = set()
+    for s in statements:
+        for pattern in s.resources or ():
+            if not pattern.startswith("arn:aws:") or service_of(pattern) in ("iam", "sts", ""):
+                continue
+            if service_of(pattern) == "s3" and pattern.endswith("/*") and "*" not in pattern[:-2]:
+                pattern = pattern[:-2]
+            if "*" in pattern or "?" in pattern:
+                continue
+            account = pattern.split(":")[4]
+            if account in ("", account_id):
+                out.add(pattern)
+    return out
 
 
 def _document(raw) -> dict:
@@ -211,15 +247,44 @@ class AWSExportConnector:
             arn: _document(doc) for arn, doc in (_load(self.root / "resource_policies.json", {}) or {}).items()
         }
 
-        # Resources: the tagged inventory, every role's ARN, and the IAM plane.
-        resources: dict[str, dict] = {}
-        for item in (_load(self.root / "resources.json", {}) or {}).get("ResourceTagMappingList", ()):
-            resources[item["ResourceARN"]] = {"tags": _tags(item.get("Tags")), "principal": None}
+        # Principals' statements first: the policies name resources too.
         roles = details.get("RoleDetailList", ())
+        principals = []
+        for user in details.get("UserDetailList", ()):
+            statements = []
+            for name in user.get("GroupList", ()):
+                group = groups.get(name, {})
+                statements += self._identity_statements(group.get("Arn", name), group, managed)
+                yield from self._inline_policies(group.get("Arn", name), group.get("GroupPolicyList", ()))
+            statements += self._identity_statements(user["Arn"], user, managed)
+            yield from self._inline_policies(user["Arn"], user.get("UserPolicyList", ()))
+            principals.append((user, statements, "user"))
+        for role in roles:
+            statements = self._identity_statements(role["Arn"], role, managed)
+            yield from self._inline_policies(role["Arn"], role.get("RolePolicyList", ()))
+            principals.append((role, statements, "role"))
+
+        # Resources: Config's inventory, the tagging API's tags, every exact ARN
+        # a policy names, every role's ARN, and the IAM plane.
+        resources: dict[str, dict] = {}
+
+        def add(arn: str, tags: dict) -> None:
+            entry = resources.setdefault(arn, {"tags": {}, "principal": None})
+            entry["tags"].update(tags)
+
+        for row in (_load(self.root / "config_resources.json", {}) or {}).get("Results", ()):
+            item = json.loads(row) if isinstance(row, str) else row
+            if item.get("arn"):
+                add(item["arn"], _tags(item.get("tags")))
+        for item in (_load(self.root / "resources.json", {}) or {}).get("ResourceTagMappingList", ()):
+            add(item["ResourceARN"], _tags(item.get("Tags")))
+        all_statements = [s for _, stmts, _ in principals for s in stmts]
+        for arn in sorted(_referenced_arns(all_statements, self.account_id)):
+            add(arn, {})
+        for arn in resource_policies:
+            add(arn, {})
         for role in roles:
             resources[role["Arn"]] = {"tags": _tags(role.get("Tags")), "principal": role["Arn"]}
-        for arn in resource_policies:
-            resources.setdefault(arn, {"tags": {}, "principal": None})
 
         resource_statements: dict[str, tuple[Statement, ...]] = {}
         for arn, doc in resource_policies.items():
@@ -242,21 +307,6 @@ class AWSExportConnector:
         })
 
         # Principals and their effective grants.
-        principals = []
-        for user in details.get("UserDetailList", ()):
-            statements, sources = [], []
-            for name in user.get("GroupList", ()):
-                group = groups.get(name, {})
-                statements += self._identity_statements(group.get("Arn", name), group, managed)
-                yield from self._inline_policies(group.get("Arn", name), group.get("GroupPolicyList", ()))
-            statements += self._identity_statements(user["Arn"], user, managed)
-            yield from self._inline_policies(user["Arn"], user.get("UserPolicyList", ()))
-            principals.append((user, statements, "user"))
-        for role in roles:
-            statements = self._identity_statements(role["Arn"], role, managed)
-            yield from self._inline_policies(role["Arn"], role.get("RolePolicyList", ()))
-            principals.append((role, statements, "role"))
-
         targets = sorted(resources) + [self.iam_plane]
         for principal, statements, kind in principals:
             yield self._identity(principal, kind)

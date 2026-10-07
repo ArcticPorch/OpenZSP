@@ -1,0 +1,9 @@
+{
+  "Results": [
+    "{\"arn\": \"arn:aws:s3:::acme-payments-ledger\", \"resourceType\": \"AWS::S3::Bucket\", \"tags\": [{\"key\": \"zsp:sensitivity\", \"value\": \"critical\"}]}",
+    "{\"arn\": \"arn:aws:s3:::acme-analytics-lake\", \"resourceType\": \"AWS::S3::Bucket\", \"tags\": [{\"key\": \"zsp:sensitivity\", \"value\": \"medium\"}]}",
+    "{\"arn\": \"arn:aws:s3:::acme-marketing-assets\", \"resourceType\": \"AWS::S3::Bucket\", \"tags\": [{\"key\": \"zsp:sensitivity\", \"value\": \"low\"}]}",
+    "{\"arn\": \"arn:aws:s3:::acme-db-backups\", \"resourceType\": \"AWS::S3::Bucket\", \"tags\": []}",
+    "{\"arn\": \"arn:aws:dynamodb:us-east-1:111122223333:table/customers\", \"resourceType\": \"AWS::DynamoDB::Table\", \"tags\": [{\"key\": \"zsp:sensitivity\", \"value\": \"critical\"}]}"
+  ]
+}

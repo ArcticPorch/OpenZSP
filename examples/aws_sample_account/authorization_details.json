@@ -229,6 +229,14 @@
                 ]
               },
               {
+                "Action": [
+                  "dynamodb:Query",
+                  "dynamodb:GetItem"
+                ],
+                "Effect": "Allow",
+                "Resource": "arn:aws:dynamodb:us-east-1:111122223333:table/analytics-events"
+              },
+              {
                 "Action": "sts:AssumeRole",
                 "Effect": "Allow",
                 "Resource": "arn:aws:iam::111122223333:role/DataEngineerRole"

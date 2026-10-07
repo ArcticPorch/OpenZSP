@@ -61,6 +61,11 @@ connectors → evidence → normalize → models → graph → risk (features ·
 - [x] AWS connector (IAM Service Authorization Reference mapping) — offline exports; table generated from AWS's Service Reference; `--aws`; sample account
 - [x] Effective-permission evaluation (policies, boundaries, SCPs, conditions) — per action, resource-type aware, trust policies; conditions kept at lower confidence
 - [x] Freeze + self-validate `Identity`, `Resource`, `Event`
+- [x] Resource inventory from AWS Config + policy-named ARNs (the tagging API alone misses untagged resources); `NotPrincipal`
+- [ ] Validate the AWS connector on a real account; compare with IAM Policy Simulator / Access Analyzer
+- [ ] AWS: cross-account access, session policies, VPC endpoint policies, Identity Center permission sets
+- [ ] AWS: evaluate common condition keys instead of only lowering confidence
+- [ ] Measure scale (principals × resources) on a large export
 
 ## Out of scope
 

@@ -167,3 +167,19 @@ def test_iam_cannot_grant_past_an_scp(estate, findings):
     assert not any("org-trail" in g for g in plane.governs)
     assert "PRIVILEGE_ESCALATION" not in findings["ci-deployer"]
     assert "PRIVILEGE_ESCALATION" not in findings["breakglass"]
+
+
+# --- The resource list -------------------------------------------------------------
+
+
+def test_an_untagged_resource_comes_from_aws_config(estate):
+    """The tagging API only returns tagged resources; Config sees the rest."""
+    backups = estate.resource("arn:aws:s3:::acme-db-backups")
+    assert backups is not None and backups.sensitivity is Sensitivity.MEDIUM  # untagged default
+    assert C.ADMIN in caps(estate, "ci-deployer", "acme-db-backups")
+
+
+def test_a_resource_named_only_in_a_policy_is_still_evaluated(estate):
+    table = f"arn:aws:dynamodb:us-east-1:{ACCOUNT}:table/analytics-events"
+    assert estate.resource(table) is not None
+    assert caps(estate, "alice", "table/analytics-events") == {C.READ}

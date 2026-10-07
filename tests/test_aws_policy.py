@@ -146,3 +146,18 @@ def test_a_public_bucket_policy_is_public():
     assert not is_public(policy({"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject",
                                  "Resource": BUCKET + "/*",
                                  "Condition": {"StringEquals": {"aws:PrincipalOrgID": "o-1"}}}))
+
+
+def test_a_deny_with_not_principal_locks_everyone_else_out():
+    """How some accounts pin a bucket to one role: Deny * NotPrincipal role."""
+    lock = parse_policy({"Statement": [{"Effect": "Deny", "NotPrincipal": {"AWS": ROLE},
+                                        "Action": "s3:*", "Resource": BUCKET + "/*"}]}, "lock")
+    assert caps(policy(allow("s3:GetObject")), resource_statements=lock) == {}
+    kept = effective_capabilities(ROLE, BUCKET, policy(allow("s3:GetObject")), resource_statements=lock)
+    assert {e.capability for e in kept} == {C.READ}
+
+
+def test_an_allow_with_not_principal_is_public():
+    everyone_but = parse_policy({"Statement": [{"Effect": "Allow", "NotPrincipal": {"AWS": ROLE},
+                                                "Action": "s3:GetObject", "Resource": BUCKET + "/*"}]}, "p")
+    assert is_public(everyone_but)

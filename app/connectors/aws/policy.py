@@ -64,6 +64,9 @@ class Statement:
     not_resources: tuple[str, ...]
     principals: Optional[tuple[str, ...]]  # resource policies only; "*" for anyone
     condition_keys: tuple[str, ...]
+    # NotPrincipal: everyone except these. Rare and discouraged by AWS, but a
+    # Deny with NotPrincipal is how some accounts lock a bucket to one role.
+    not_principals: tuple[str, ...] = ()
 
     @property
     def conditional(self) -> bool:
@@ -115,6 +118,7 @@ def parse_policy(document: dict, policy_id: str) -> tuple[Statement, ...]:
             not_resources=_as_tuple(raw.get("NotResource")),
             principals=_principals(raw.get("Principal")),
             condition_keys=tuple(keys),
+            not_principals=_principals(raw.get("NotPrincipal")) or (),
         ))
     return tuple(out)
 
@@ -153,6 +157,10 @@ def _principal_named(statement: Statement, principal_arn: str, *, anyone: bool =
     not a grant held by each identity -- otherwise every principal in the
     account would "hold" read on every public bucket.
     """
+    if statement.principals is None and statement.not_principals:
+        # Everyone except the listed principals: as broad as "*" for everyone else.
+        excluded = any(fnmatch.fnmatchcase(principal_arn, p) for p in statement.not_principals)
+        return anyone and not excluded
     return bool(statement.principals) and any(
         (p == "*" and anyone) or (p != "*" and fnmatch.fnmatchcase(principal_arn, p))
         for p in statement.principals
@@ -266,7 +274,7 @@ def effective_capabilities(
     for s in deny_sources:
         if s.effect != "Deny" or s.conditional or not _resource_applies(s, resource_arn):
             continue
-        if s.principals is not None and not _principal_named(s, principal_arn):
+        if (s.principals is not None or s.not_principals) and not _principal_named(s, principal_arn):
             continue
         denied |= _actions_of(s, universe)
 
@@ -339,6 +347,7 @@ def fenced_by_scp(resource_arn: str, scp_levels: Iterable[Iterable[Statement]]) 
 def is_public(resource_statements: Iterable[Statement]) -> bool:
     """An unconditional Allow to principal "*": reachable by anyone."""
     return any(
-        s.effect == "Allow" and not s.conditional and s.principals == ("*",)
+        s.effect == "Allow" and not s.conditional
+        and (s.principals == ("*",) or (s.principals is None and s.not_principals))
         for s in resource_statements
     )
